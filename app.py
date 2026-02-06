@@ -265,7 +265,8 @@ if run_button and target_ticker:
                 with col_b:
                     evr = row["EV/Revenue"]
                     st.metric("EV/Rev", f"{evr:.2f}x" if evr and evr > 0 else "N/A")
-                st.caption(f"Filed: {row['filing_date']}")
+                fy = row.get("fiscal_year", "")
+                st.caption(f"Filed: {row['filing_date']}" + (f"  ·  FY{fy}" if fy else ""))
         
         st.markdown("---")
         
@@ -367,10 +368,14 @@ if run_button and target_ticker:
             display_df["EV/Revenue_fmt"] = display_df["EV/Revenue"].apply(lambda x: f"{x:.2f}x" if x > 0 else "N/A")
             display_df["EV/EBITDA_fmt"] = display_df["EV/EBITDA"].apply(lambda x: f"{x:.2f}x" if x > 0 else "N/A")
             
-            out = display_df[["ticker", "filing_date", "revenue_fmt", "net_income_fmt", "ebitda_fmt",
-                              "net_margin_%_fmt", "mkt_cap_fmt", "P/E_Ratio_fmt", "EV/Revenue_fmt", "EV/EBITDA_fmt"]].copy()
-            out.columns = ["Ticker", "Filing Date", "Revenue (USD Millions)", "Net Income (USD Millions)", "EBITDA (USD Millions)",
-                           "Net Margin %", "Market Cap", "P/E", "EV/Revenue", "EV/EBITDA"]
+            cols = ["ticker", "filing_date"]
+            if "fiscal_year" in display_df.columns:
+                display_df["fiscal_year_fmt"] = display_df["fiscal_year"].apply(lambda x: f"FY{x}" if x else "—")
+                cols.append("fiscal_year_fmt")
+            cols += ["revenue_fmt", "net_income_fmt", "ebitda_fmt", "net_margin_%_fmt", "mkt_cap_fmt", "P/E_Ratio_fmt", "EV/Revenue_fmt", "EV/EBITDA_fmt"]
+            out = display_df[[c for c in cols if c in display_df.columns]].copy()
+            col_names = ["Ticker", "Filing Date"] + (["Fiscal Year"] if "fiscal_year_fmt" in out.columns else []) + ["Revenue (USD Millions)", "Net Income (USD Millions)", "EBITDA (USD Millions)", "Net Margin %", "Market Cap", "P/E", "EV/Revenue", "EV/EBITDA"]
+            out.columns = col_names
             st.dataframe(out, use_container_width=True, hide_index=True)
         
         st.markdown("---")
