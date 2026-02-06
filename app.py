@@ -1,11 +1,57 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import plotly.express as px
+import plotly.graph_objects as go
 from streamlit_searchbox import st_searchbox
 from comps_agent import fetch_and_analyze
 
 # --- Page Configuration ---
-st.set_page_config(page_title="IB Comps Agent", layout="wide")
+st.set_page_config(
+    page_title="IB Comps Agent",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for better styling
+st.markdown("""
+    <style>
+    .main-header {
+        font-size: 3rem;
+        font-weight: 700;
+        background: linear-gradient(90deg, #1f77b4, #ff7f0e);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem;
+    }
+    .sub-header {
+        color: #666;
+        font-size: 1.1rem;
+        margin-bottom: 2rem;
+    }
+    .metric-card {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #1f77b4;
+    }
+    .stButton>button {
+        width: 100%;
+        background: linear-gradient(90deg, #1f77b4, #2ca02c);
+        color: white;
+        font-weight: 600;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        border: none;
+    }
+    .stButton>button:hover {
+        background: linear-gradient(90deg, #1565c0, #1e7e34);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # --- Industry Peer Mapping ---
 PEER_MAP = {
@@ -21,95 +67,286 @@ def search_tickers(searchterm: str):
     if not searchterm or len(searchterm) < 2:
         return []
     try:
-        # Queries YFinance Search API for matching tickers/names
-        results = yf.Search(searchterm, max_results=5).quotes
-        return [(f"{q['symbol']} ({q['shortname']})", q['symbol']) for q in results]
+        results = yf.Search(searchterm, max_results=8).quotes
+        return [(f"{q['symbol']} - {q['shortname']}", q['symbol']) for q in results]
     except:
         return []
 
-# --- UI HEADER ---
-st.title("📊 IB Comps Agent")
-st.caption("Automated SEC 10-K Benchmarking Dashboard for MBA Financial Analysis")
+# --- Header with Gradient ---
+st.markdown('<h1 class="main-header">📊 IB Comps Agent</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Automated SEC 10-K Benchmarking & Investment Banking Valuation Dashboard</p>', unsafe_allow_html=True)
 
-# --- SIDEBAR: SETTINGS ---
+# --- Sidebar: Settings ---
 with st.sidebar:
-    st.header("Analysis Settings")
+    st.markdown("### ⚙️ Analysis Settings")
+    st.markdown("---")
     
-    # 1. Primary Searchbox
+    # 1. Primary Search
     selected_ticker = st_searchbox(
         search_tickers,
         key="ticker_search",
-        label="Search Company Name",
-        placeholder="Type 'Apple'..."
+        label="🔍 Search Company",
+        placeholder="Type 'Apple' or 'AAPL'...",
+        default=None
     )
     
-    # 2. Manual Fallback (Crucial if Search API is slow)
-    manual_ticker = st.text_input("OR Type Ticker Manually", value="").upper()
+    # 2. Manual Fallback
+    st.markdown("**OR**")
+    manual_ticker = st.text_input(
+        "📝 Enter Ticker Symbol",
+        value="",
+        placeholder="e.g., AAPL, MSFT, GOOGL",
+        help="Type the stock ticker symbol directly"
+    ).upper().strip()
     
-    # Final Ticker Determination
     target_ticker = selected_ticker if selected_ticker else manual_ticker
 
     if target_ticker:
         try:
-            # Detect Industry for peer recommendations
-            info = yf.Ticker(target_ticker).info
-            industry = info.get('industry', "Technology")
-            st.info(f"📍 **Industry:** {industry}")
+            # Fetch company info
+            ticker_obj = yf.Ticker(target_ticker)
+            info = ticker_obj.info
             
-            # Suggest peers based on the mapping above
-            defaults = PEER_MAP.get(industry, ["MSFT", "GOOGL", "AMZN"])
+            # Display company info card
+            st.markdown("---")
+            st.markdown("### 📋 Company Info")
+            
+            company_name = info.get('longName', target_ticker)
+            industry = info.get('industry', 'N/A')
+            sector = info.get('sector', 'N/A')
+            
+            st.markdown(f"**{company_name}**")
+            st.caption(f"Ticker: **{target_ticker}**")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Industry", industry[:20] + "..." if len(industry) > 20 else industry)
+            with col2:
+                st.metric("Sector", sector[:15] + "..." if len(sector) > 15 else sector)
+            
+            # Peer selection
+            st.markdown("---")
+            st.markdown("### 👥 Peer Selection")
+            
+            # Get suggested peers based on industry
+            suggested_peers = PEER_MAP.get(industry, ["MSFT", "GOOGL", "AMZN"])
+            all_options = list(set(suggested_peers + ["META", "TSLA", "NFLX", "NVDA", "AMD", "INTC"]))
+            
             peers = st.multiselect(
-                "Select Peer Group", 
-                options=list(set(defaults + ["META", "TSLA", "NFLX"])), 
-                default=defaults[:3]
+                "Select Comparable Companies",
+                options=all_options,
+                default=suggested_peers[:3] if len(suggested_peers) >= 3 else suggested_peers,
+                help="Select companies to compare against"
             )
             
-            run_button = st.button("🚀 Generate IB Comps Table", width="stretch")
-        except Exception:
-            st.error("Ticker not recognized. Please check the symbol.")
+            if not peers:
+                st.warning("⚠️ Please select at least one peer company")
+            
+            st.markdown("---")
+            run_button = st.button("🚀 Generate Comps Analysis", use_container_width=True, type="primary")
+            
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+            st.info("Please check the ticker symbol and try again.")
             run_button = False
     else:
-        st.info("Search a company or type a ticker above to begin.")
+        st.info("👆 Search for a company or enter a ticker symbol to begin analysis.")
         run_button = False
 
-# --- MAIN EXECUTION ---
-if run_button:
+# --- Main Content Area ---
+if run_button and target_ticker:
     all_tickers = [target_ticker] + peers
     
-    with st.spinner(f"Accessing SEC EDGAR for {', '.join(all_tickers)}..."):
-        # Calls the logic in comps_agent.py
-        df = fetch_and_analyze(all_tickers)
+    if not peers:
+        st.warning("⚠️ Please select at least one peer company in the sidebar.")
+        st.stop()
     
-    if not df.empty:
-        st.success("Analysis Complete")
-        
-        # 1. High-Level Metric Cards
-        m_cols = st.columns(len(df))
-        for i, row in df.iterrows():
-            with m_cols[i]:
-                st.metric(
-                    row['ticker'], 
-                    f"${row['revenue']/1e9:.1f}B", 
-                    f"{row['net_margin_%']:.1f}% Margin"
-                )
-                st.caption(f"10-K Filed: {row['filing_date']}")
+    # Progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # 1. Fetch SEC Data
+    status_text.text(f"📥 Extracting 10-K data for {', '.join(all_tickers)}...")
+    progress_bar.progress(20)
+    
+    try:
+        df = fetch_and_analyze(all_tickers)
+        progress_bar.progress(50)
+    except Exception as e:
+        st.error(f"❌ Error fetching SEC data: {str(e)}")
+        st.stop()
+    
+    # 2. Fetch Real-time Market Data for Valuation
+    status_text.text("💹 Calculating valuation multiples...")
+    progress_bar.progress(70)
+    
+    val_data = []
+    for ticker in all_tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+            mkt_cap = info.get('marketCap', 0)
+            enterprise_value = info.get('enterpriseValue', mkt_cap)
+            val_data.append({
+                'ticker': ticker,
+                'mkt_cap': mkt_cap,
+                'enterprise_value': enterprise_value
+            })
+        except:
+            val_data.append({
+                'ticker': ticker,
+                'mkt_cap': 0,
+                'enterprise_value': 0
+            })
+    
+    val_df = pd.DataFrame(val_data)
+    df = df.merge(val_df, on='ticker', how='left')
+    
+    # Calculate valuation metrics
+    df['P/E_Ratio'] = (df['mkt_cap'] / df['net_income']).replace([float('inf'), float('-inf')], 0)
+    df['EV/Revenue'] = (df['enterprise_value'] / df['revenue']).replace([float('inf'), float('-inf')], 0)
+    df['EV/EBITDA'] = (df['enterprise_value'] / df['ebitda']).replace([float('inf'), float('-inf')], 0)
+    df['P/S_Ratio'] = (df['mkt_cap'] / df['revenue']).replace([float('inf'), float('-inf')], 0)
+    
+    progress_bar.progress(100)
+    status_text.empty()
+    progress_bar.empty()
 
-        # 2. Detailed Data Table
-        st.write("### Financial Comparison Table (USD Millions)")
-        st.dataframe(df.style.format({
-    'revenue': "${:,.0f}",
-    'net_income': "${:,.0f}",
-    'ebitda': "${:,.0f}",
-    'net_margin_%': "{:.2f}%"
-}), width="stretch")
+    if not df.empty:
+        st.success(f"✅ Analysis complete! Processed {len(df)} companies.")
         
-        # 3. Export for Excel
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download CSV for Excel",
-            data=csv,
-            file_name=f"IB_Comps_{target_ticker}.csv",
-            mime='text/csv',
-        )
+        # --- Key Metrics Cards ---
+        st.markdown("### 📈 Key Financial Metrics")
+        metric_cols = st.columns(len(df))
+        
+        for idx, (i, row) in enumerate(df.iterrows()):
+            with metric_cols[idx]:
+                st.markdown(f"#### {row['ticker']}")
+                st.metric(
+                    "Revenue",
+                    f"${row['revenue']/1e9:.2f}B",
+                    delta=f"{row['net_margin_%']:.1f}% Margin"
+                )
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.metric("P/E", f"{row['P/E_Ratio']:.1f}x" if row['P/E_Ratio'] > 0 else "N/A")
+                with col_b:
+                    st.metric("EV/Rev", f"{row['EV/Revenue']:.2f}x" if row['EV/Revenue'] > 0 else "N/A")
+                st.caption(f"Filed: {row['filing_date']}")
+        
+        st.markdown("---")
+        
+        # --- Visualizations ---
+        st.markdown("### 📊 Comparative Analysis")
+        
+        viz_tabs = st.tabs(["📈 Revenue Comparison", "💰 Profitability", "💵 Valuation Multiples", "📋 Full Data Table"])
+        
+        with viz_tabs[0]:
+            # Revenue Bar Chart
+            fig_rev = px.bar(
+                df.sort_values('revenue', ascending=False),
+                x='ticker',
+                y='revenue',
+                title='Revenue Comparison (USD)',
+                labels={'revenue': 'Revenue ($)', 'ticker': 'Company'},
+                color='revenue',
+                color_continuous_scale='Blues'
+            )
+            fig_rev.update_layout(showlegend=False, height=400)
+            st.plotly_chart(fig_rev, use_container_width=True)
+        
+        with viz_tabs[1]:
+            # Profitability Metrics
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig_margin = px.bar(
+                    df.sort_values('net_margin_%', ascending=False),
+                    x='ticker',
+                    y='net_margin_%',
+                    title='Net Margin %',
+                    labels={'net_margin_%': 'Net Margin (%)', 'ticker': 'Company'},
+                    color='net_margin_%',
+                    color_continuous_scale='Greens'
+                )
+                fig_margin.update_layout(showlegend=False, height=350)
+                st.plotly_chart(fig_margin, use_container_width=True)
+            
+            with col2:
+                fig_ebitda = px.bar(
+                    df.sort_values('ebitda', ascending=False),
+                    x='ticker',
+                    y='ebitda',
+                    title='EBITDA (USD)',
+                    labels={'ebitda': 'EBITDA ($)', 'ticker': 'Company'},
+                    color='ebitda',
+                    color_continuous_scale='Oranges'
+                )
+                fig_ebitda.update_layout(showlegend=False, height=350)
+                st.plotly_chart(fig_ebitda, use_container_width=True)
+        
+        with viz_tabs[2]:
+            # Valuation Multiples
+            val_metrics = ['P/E_Ratio', 'EV/Revenue', 'EV/EBITDA', 'P/S_Ratio']
+            val_df_plot = df[['ticker'] + val_metrics].set_index('ticker')
+            
+            # Filter out infinite values for plotting
+            val_df_plot = val_df_plot.replace([float('inf'), float('-inf')], 0)
+            
+            fig_val = px.bar(
+                val_df_plot.reset_index(),
+                x='ticker',
+                y=val_metrics,
+                title='Valuation Multiples Comparison',
+                labels={'value': 'Multiple', 'ticker': 'Company', 'variable': 'Metric'},
+                barmode='group'
+            )
+            fig_val.update_layout(height=450)
+            st.plotly_chart(fig_val, use_container_width=True)
+        
+        with viz_tabs[3]:
+            # Full Data Table with enhanced formatting
+            display_df = df.copy()
+            display_df['revenue'] = display_df['revenue'].apply(lambda x: f"${x/1e6:,.0f}M")
+            display_df['net_income'] = display_df['net_income'].apply(lambda x: f"${x/1e6:,.0f}M")
+            display_df['ebitda'] = display_df['ebitda'].apply(lambda x: f"${x/1e6:,.0f}M")
+            display_df['mkt_cap'] = display_df['mkt_cap'].apply(lambda x: f"${x/1e9:.2f}B" if x > 0 else "N/A")
+            display_df['net_margin_%'] = display_df['net_margin_%'].apply(lambda x: f"{x:.2f}%")
+            display_df['P/E_Ratio'] = display_df['P/E_Ratio'].apply(lambda x: f"{x:.1f}x" if x > 0 else "N/A")
+            display_df['EV/Revenue'] = display_df['EV/Revenue'].apply(lambda x: f"{x:.2f}x" if x > 0 else "N/A")
+            display_df['EV/EBITDA'] = display_df['EV/EBITDA'].apply(lambda x: f"{x:.2f}x" if x > 0 else "N/A")
+            
+            st.dataframe(
+                display_df[['ticker', 'filing_date', 'revenue', 'net_income', 'ebitda', 
+                            'net_margin_%', 'mkt_cap', 'P/E_Ratio', 'EV/Revenue', 'EV/EBITDA']],
+                use_container_width=True,
+                hide_index=True
+            )
+        
+        st.markdown("---")
+        
+        # --- Export Section ---
+        st.markdown("### 💾 Export Data")
+        col_exp1, col_exp2 = st.columns(2)
+        
+        with col_exp1:
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "📥 Download CSV (Excel-ready)",
+                data=csv,
+                file_name=f"IB_Comps_{target_ticker}_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                mime='text/csv',
+                use_container_width=True
+            )
+        
+        with col_exp2:
+            st.info(f"📊 **{len(df)}** companies analyzed | Generated on {pd.Timestamp.now().strftime('%B %d, %Y at %I:%M %p')}")
+    
     else:
-        st.error("The agent could not extract data. Ensure your API Key and SEC connection are active.")
+        st.error("❌ The analysis could not extract data. Please check:")
+        st.markdown("""
+        - Your API key is valid and active
+        - SEC EDGAR connection is working
+        - Ticker symbols are correct
+        - Companies have recent 10-K filings
+        """)
