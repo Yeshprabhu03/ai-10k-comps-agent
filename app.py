@@ -228,14 +228,17 @@ if run_button and target_ticker:
         st.warning("SEC data was found but no market data could be loaded for these tickers. Check symbols or try again.")
         st.stop()
     
+    # Normalize to USD millions if backend sent dollars (e.g. value > 1e8)
+    for col in ["revenue", "net_income", "ebitda"]:
+        df[col] = df[col].apply(lambda x: x / 1e6 if x and abs(x) > 1e8 else (x if x else 0))
     # Revenue, net_income, ebitda are in USD millions; mkt_cap/enterprise_value are in dollars
     rev_dollars = df["revenue"] * 1e6
     ni_dollars = df["net_income"] * 1e6
     ebitda_dollars = df["ebitda"] * 1e6
-    df["P/E_Ratio"] = (df["mkt_cap"] / ni_dollars).replace([float("inf"), float("-inf")], 0)
-    df["EV/Revenue"] = (df["enterprise_value"] / rev_dollars).replace([float("inf"), float("-inf")], 0)
-    df["EV/EBITDA"] = (df["enterprise_value"] / ebitda_dollars).replace([float("inf"), float("-inf")], 0)
-    df["P/S_Ratio"] = (df["mkt_cap"] / rev_dollars).replace([float("inf"), float("-inf")], 0)
+    df["P/E_Ratio"] = (df["mkt_cap"] / ni_dollars).replace([float("inf"), float("-inf")], 0).fillna(0)
+    df["EV/Revenue"] = (df["enterprise_value"] / rev_dollars).replace([float("inf"), float("-inf")], 0).fillna(0)
+    df["EV/EBITDA"] = (df["enterprise_value"] / ebitda_dollars).replace([float("inf"), float("-inf")], 0).fillna(0)
+    df["P/S_Ratio"] = (df["mkt_cap"] / rev_dollars).replace([float("inf"), float("-inf")], 0).fillna(0)
 
     if not df.empty:
         st.success(f"✅ Analysis complete! Processed {len(df)} companies.")
@@ -247,17 +250,21 @@ if run_button and target_ticker:
         for idx, (i, row) in enumerate(df.iterrows()):
             with metric_cols[idx]:
                 st.markdown(f"#### {row['ticker']}")
-                # Data is in USD millions; /1000 = billions for display
+                # Data is in USD millions; /1000 = billions. Guard: if value huge, treat as dollars and use /1e9
+                rev = row["revenue"]
+                rev_b = rev / 1000 if rev < 1e8 else rev / 1e9
                 st.metric(
                     "Revenue",
-                    f"${row['revenue']/1000:.2f}B",
+                    f"${rev_b:.2f}B",
                     delta=f"{row['net_margin_%']:.1f}% Margin"
                 )
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    st.metric("P/E", f"{row['P/E_Ratio']:.1f}x" if row['P/E_Ratio'] > 0 else "N/A")
+                    pe = row["P/E_Ratio"]
+                    st.metric("P/E", f"{pe:.1f}x" if pe and pe > 0 else "N/A")
                 with col_b:
-                    st.metric("EV/Rev", f"{row['EV/Revenue']:.2f}x" if row['EV/Revenue'] > 0 else "N/A")
+                    evr = row["EV/Revenue"]
+                    st.metric("EV/Rev", f"{evr:.2f}x" if evr and evr > 0 else "N/A")
                 st.caption(f"Filed: {row['filing_date']}")
         
         st.markdown("---")
@@ -269,75 +276,91 @@ if run_button and target_ticker:
         
         with viz_tabs[0]:
             # Revenue Bar Chart (revenue in USD millions)
-            fig_rev = px.bar(
-                df.sort_values('revenue', ascending=False),
-                x='ticker',
-                y='revenue',
-                title='Revenue Comparison (USD Millions)',
-                labels={'revenue': 'Revenue (USD Millions)', 'ticker': 'Company'},
-                color='revenue',
-                color_continuous_scale='Blues'
-            )
-            fig_rev.update_layout(showlegend=False, height=400)
-            st.plotly_chart(fig_rev, use_container_width=True)
+            plot_df = df[["ticker", "revenue"]].copy().fillna(0)
+            plot_df = plot_df.loc[plot_df["revenue"] > 0].sort_values("revenue", ascending=False)
+            if not plot_df.empty:
+                fig_rev = px.bar(
+                    plot_df,
+                    x="ticker",
+                    y="revenue",
+                    title="Revenue Comparison (USD Millions)",
+                    labels={"revenue": "Revenue (USD Millions)", "ticker": "Company"},
+                    color="revenue",
+                    color_continuous_scale="Blues"
+                )
+                fig_rev.update_layout(showlegend=False, height=400)
+                st.plotly_chart(fig_rev, use_container_width=True)
+            else:
+                st.info("No revenue data to display.")
         
         with viz_tabs[1]:
             # Profitability Metrics
             col1, col2 = st.columns(2)
-            
+            plot_df_m = df[["ticker", "net_margin_%"]].copy().fillna(0)
+            plot_df_e = df[["ticker", "ebitda"]].copy().fillna(0)
             with col1:
-                fig_margin = px.bar(
-                    df.sort_values('net_margin_%', ascending=False),
-                    x='ticker',
-                    y='net_margin_%',
-                    title='Net Margin %',
-                    labels={'net_margin_%': 'Net Margin (%)', 'ticker': 'Company'},
-                    color='net_margin_%',
-                    color_continuous_scale='Greens'
-                )
-                fig_margin.update_layout(showlegend=False, height=350)
-                st.plotly_chart(fig_margin, use_container_width=True)
-            
+                if not plot_df_m.empty:
+                    fig_margin = px.bar(
+                        plot_df_m.sort_values("net_margin_%", ascending=False),
+                        x="ticker",
+                        y="net_margin_%",
+                        title="Net Margin %",
+                        labels={"net_margin_%": "Net Margin (%)", "ticker": "Company"},
+                        color="net_margin_%",
+                        color_continuous_scale="Greens"
+                    )
+                    fig_margin.update_layout(showlegend=False, height=350)
+                    st.plotly_chart(fig_margin, use_container_width=True)
+                else:
+                    st.info("No margin data.")
             with col2:
-                fig_ebitda = px.bar(
-                    df.sort_values('ebitda', ascending=False),
-                    x='ticker',
-                    y='ebitda',
-                    title='EBITDA (USD Millions)',
-                    labels={'ebitda': 'EBITDA (USD Millions)', 'ticker': 'Company'},
-                    color='ebitda',
-                    color_continuous_scale='Oranges'
-                )
-                fig_ebitda.update_layout(showlegend=False, height=350)
-                st.plotly_chart(fig_ebitda, use_container_width=True)
+                if not plot_df_e.empty and plot_df_e["ebitda"].gt(0).any():
+                    fig_ebitda = px.bar(
+                        plot_df_e.sort_values("ebitda", ascending=False),
+                        x="ticker",
+                        y="ebitda",
+                        title="EBITDA (USD Millions)",
+                        labels={"ebitda": "EBITDA (USD Millions)", "ticker": "Company"},
+                        color="ebitda",
+                        color_continuous_scale="Oranges"
+                    )
+                    fig_ebitda.update_layout(showlegend=False, height=350)
+                    st.plotly_chart(fig_ebitda, use_container_width=True)
+                else:
+                    st.info("No EBITDA data.")
         
         with viz_tabs[2]:
             # Valuation Multiples
-            val_metrics = ['P/E_Ratio', 'EV/Revenue', 'EV/EBITDA', 'P/S_Ratio']
-            val_df_plot = df[['ticker'] + val_metrics].set_index('ticker')
-            
-            # Filter out infinite values for plotting
-            val_df_plot = val_df_plot.replace([float('inf'), float('-inf')], 0)
-            
-            fig_val = px.bar(
-                val_df_plot.reset_index(),
-                x='ticker',
-                y=val_metrics,
-                title='Valuation Multiples Comparison',
-                labels={'value': 'Multiple', 'ticker': 'Company', 'variable': 'Metric'},
-                barmode='group'
-            )
-            fig_val.update_layout(height=450)
-            st.plotly_chart(fig_val, use_container_width=True)
+            val_metrics = ["P/E_Ratio", "EV/Revenue", "EV/EBITDA", "P/S_Ratio"]
+            val_df_plot = df[["ticker"] + val_metrics].copy()
+            val_df_plot[val_metrics] = val_df_plot[val_metrics].replace([float("inf"), float("-inf")], 0).fillna(0)
+            # Clip extreme multiples for readable chart (e.g. cap at 99th percentile or 100)
+            for m in val_metrics:
+                q = val_df_plot[m].replace(0, float("nan")).quantile(0.99)
+                cap = q if pd.notna(q) and q > 0 else 100
+                val_df_plot[m] = val_df_plot[m].clip(upper=cap)
+            if val_df_plot[val_metrics].abs().max().max() > 0:
+                fig_val = px.bar(
+                    val_df_plot,
+                    x="ticker",
+                    y=val_metrics,
+                    title="Valuation Multiples Comparison",
+                    labels={"value": "Multiple", "ticker": "Company", "variable": "Metric"},
+                    barmode="group"
+                )
+                fig_val.update_layout(height=450)
+                st.plotly_chart(fig_val, use_container_width=True)
+            else:
+                st.info("No valuation multiples (market cap may be missing from yfinance).")
         
         with viz_tabs[3]:
             # Financial Comparison Table (USD Millions) — whole numbers
             st.markdown("#### Financial Comparison Table (USD Millions)")
             display_df = df.copy()
-            # Values are already in USD millions; show as whole numbers (e.g. 716,924)
-            display_df["revenue_fmt"] = display_df["revenue"].apply(lambda x: f"{x:,.0f}")
-            display_df["net_income_fmt"] = display_df["net_income"].apply(lambda x: f"{x:,.0f}")
-            display_df["ebitda_fmt"] = display_df["ebitda"].apply(lambda x: f"{x:,.0f}")
+            # Values in USD millions; show as whole numbers (e.g. 716,924)
+            display_df["revenue_fmt"] = display_df["revenue"].apply(lambda x: f"{float(x):,.0f}" if x is not None and not (isinstance(x, float) and (x != x)) else "—")
+            display_df["net_income_fmt"] = display_df["net_income"].apply(lambda x: f"{float(x):,.0f}" if x is not None and not (isinstance(x, float) and (x != x)) else "—")
+            display_df["ebitda_fmt"] = display_df["ebitda"].apply(lambda x: f"{float(x):,.0f}" if x is not None and not (isinstance(x, float) and (x != x)) else "—")
             display_df["mkt_cap_fmt"] = display_df["mkt_cap"].apply(lambda x: f"${x/1e9:.2f}B" if x > 0 else "N/A")
             display_df["net_margin_%_fmt"] = display_df["net_margin_%"].apply(lambda x: f"{x:.2f}%")
             display_df["P/E_Ratio_fmt"] = display_df["P/E_Ratio"].apply(lambda x: f"{x:.1f}x" if x > 0 else "N/A")
