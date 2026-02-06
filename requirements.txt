@@ -1,0 +1,7 @@
+streamlit==1.54.0
+yfinance==1.1.0
+pandas==2.3.3
+google-genai==1.62.0
+edgartools==5.14.0
+streamlit-searchbox==0.1.24
+python-dotenv==1.2.1
