@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -5,6 +6,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 from streamlit_searchbox import st_searchbox
 from comps_agent import fetch_and_analyze
+
+# --- API key check (Streamlit Cloud uses st.secrets, local uses .env) ---
+def get_api_key():
+    if hasattr(st, "secrets") and st.secrets.get("GOOGLE_API_KEY"):
+        return st.secrets["GOOGLE_API_KEY"]
+    return os.environ.get("GOOGLE_API_KEY")
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -161,17 +168,40 @@ if run_button and target_ticker:
         st.warning("⚠️ Please select at least one peer company in the sidebar.")
         st.stop()
     
+    # 0. Ensure API key is set (required for Gemini in comps_agent)
+    api_key = get_api_key()
+    if not api_key or not str(api_key).strip():
+        st.error(
+            "**Google API key is missing.** "
+            "On Streamlit Cloud: add `GOOGLE_API_KEY` in **Settings → Secrets**. "
+            "Locally: add it to your `.env` file."
+        )
+        st.stop()
+    
     # 1. Fetch SEC Data
     with st.spinner("Extracting 10-K data..."):
         try:
             df = fetch_and_analyze(all_tickers)
         except Exception as e:
-            st.error(f"❌ Error fetching SEC data: {str(e)}")
+            err_msg = str(e).lower()
+            if "api key" in err_msg or "invalid_argument" in err_msg or "401" in err_msg:
+                st.error(
+                    "**Invalid or missing Google API key.** "
+                    "Check **Streamlit Cloud → Settings → Secrets** (or `.env` locally) and set a valid `GOOGLE_API_KEY`."
+                )
+            else:
+                st.error(f"❌ Error fetching SEC data: {str(e)}")
             st.stop()
     
-    # 2. Safety check: ensure the SEC agent actually returned data
-    if df is None or df.empty or 'ticker' not in df.columns:
-        st.error("The SEC Agent could not find data for these tickers. Please check the spelling or filing availability.")
+    # 2. Safety check: ensure the SEC agent actually returned data (avoids KeyError: 'ticker')
+    if df is None:
+        df = pd.DataFrame()
+    if not isinstance(df, pd.DataFrame) or df.empty or "ticker" not in getattr(df, "columns", []):
+        st.error(
+            "The SEC Agent could not find data for these tickers. "
+            "This often happens when the Google API key is invalid or missing (check Secrets). "
+            "Otherwise check ticker symbols and filing availability."
+        )
         st.stop()
     
     # 3. Fetch Real-time Market Data for Valuation
@@ -180,25 +210,28 @@ if run_button and target_ticker:
         for t in all_tickers:
             try:
                 stock = yf.Ticker(t)
-                mkt_cap = stock.info.get('marketCap', 0)
-                enterprise_value = stock.info.get('enterpriseValue', mkt_cap)
-                val_data.append({'ticker': t, 'mkt_cap': mkt_cap, 'enterprise_value': enterprise_value})
+                mkt_cap = stock.info.get("marketCap", 0)
+                enterprise_value = stock.info.get("enterpriseValue", mkt_cap)
+                val_data.append({"ticker": t, "mkt_cap": mkt_cap, "enterprise_value": enterprise_value})
             except Exception:
-                val_data.append({'ticker': t, 'mkt_cap': 0, 'enterprise_value': 0})
+                val_data.append({"ticker": t, "mkt_cap": 0, "enterprise_value": 0})
         
         val_df = pd.DataFrame(val_data)
-        # Inner merge: only show rows where we have BOTH SEC and market data
-        df = df.merge(val_df, on='ticker', how='inner')
+        try:
+            df = df.merge(val_df, on="ticker", how="inner")
+        except KeyError:
+            st.error("The SEC Agent could not find data for these tickers. Please check the spelling or filing availability.")
+            st.stop()
     
-    # Calculate valuation metrics
-    df['P/E_Ratio'] = (df['mkt_cap'] / df['net_income']).replace([float('inf'), float('-inf')], 0)
-    df['EV/Revenue'] = (df['enterprise_value'] / df['revenue']).replace([float('inf'), float('-inf')], 0)
-    df['EV/EBITDA'] = (df['enterprise_value'] / df['ebitda']).replace([float('inf'), float('-inf')], 0)
-    df['P/S_Ratio'] = (df['mkt_cap'] / df['revenue']).replace([float('inf'), float('-inf')], 0)
-
+    # 4. Calculate valuation metrics (only if we have rows)
     if df.empty:
         st.warning("SEC data was found but no market data could be loaded for these tickers. Check symbols or try again.")
         st.stop()
+    
+    df["P/E_Ratio"] = (df["mkt_cap"] / df["net_income"]).replace([float("inf"), float("-inf")], 0)
+    df["EV/Revenue"] = (df["enterprise_value"] / df["revenue"]).replace([float("inf"), float("-inf")], 0)
+    df["EV/EBITDA"] = (df["enterprise_value"] / df["ebitda"]).replace([float("inf"), float("-inf")], 0)
+    df["P/S_Ratio"] = (df["mkt_cap"] / df["revenue"]).replace([float("inf"), float("-inf")], 0)
 
     if not df.empty:
         st.success(f"✅ Analysis complete! Processed {len(df)} companies.")
