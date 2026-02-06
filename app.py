@@ -161,56 +161,44 @@ if run_button and target_ticker:
         st.warning("⚠️ Please select at least one peer company in the sidebar.")
         st.stop()
     
-    # Progress tracking
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
     # 1. Fetch SEC Data
-    status_text.text(f"📥 Extracting 10-K data for {', '.join(all_tickers)}...")
-    progress_bar.progress(20)
+    with st.spinner("Extracting 10-K data..."):
+        try:
+            df = fetch_and_analyze(all_tickers)
+        except Exception as e:
+            st.error(f"❌ Error fetching SEC data: {str(e)}")
+            st.stop()
     
-    try:
-        df = fetch_and_analyze(all_tickers)
-        progress_bar.progress(50)
-    except Exception as e:
-        st.error(f"❌ Error fetching SEC data: {str(e)}")
+    # 2. Safety check: ensure the SEC agent actually returned data
+    if df is None or df.empty or 'ticker' not in df.columns:
+        st.error("The SEC Agent could not find data for these tickers. Please check the spelling or filing availability.")
         st.stop()
     
-    # 2. Fetch Real-time Market Data for Valuation
-    status_text.text("💹 Calculating valuation multiples...")
-    progress_bar.progress(70)
-    
-    val_data = []
-    for ticker in all_tickers:
-        try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            mkt_cap = info.get('marketCap', 0)
-            enterprise_value = info.get('enterpriseValue', mkt_cap)
-            val_data.append({
-                'ticker': ticker,
-                'mkt_cap': mkt_cap,
-                'enterprise_value': enterprise_value
-            })
-        except:
-            val_data.append({
-                'ticker': ticker,
-                'mkt_cap': 0,
-                'enterprise_value': 0
-            })
-    
-    val_df = pd.DataFrame(val_data)
-    df = df.merge(val_df, on='ticker', how='left')
+    # 3. Fetch Real-time Market Data for Valuation
+    with st.spinner("Calculating Valuation Multiples..."):
+        val_data = []
+        for t in all_tickers:
+            try:
+                stock = yf.Ticker(t)
+                mkt_cap = stock.info.get('marketCap', 0)
+                enterprise_value = stock.info.get('enterpriseValue', mkt_cap)
+                val_data.append({'ticker': t, 'mkt_cap': mkt_cap, 'enterprise_value': enterprise_value})
+            except Exception:
+                val_data.append({'ticker': t, 'mkt_cap': 0, 'enterprise_value': 0})
+        
+        val_df = pd.DataFrame(val_data)
+        # Inner merge: only show rows where we have BOTH SEC and market data
+        df = df.merge(val_df, on='ticker', how='inner')
     
     # Calculate valuation metrics
     df['P/E_Ratio'] = (df['mkt_cap'] / df['net_income']).replace([float('inf'), float('-inf')], 0)
     df['EV/Revenue'] = (df['enterprise_value'] / df['revenue']).replace([float('inf'), float('-inf')], 0)
     df['EV/EBITDA'] = (df['enterprise_value'] / df['ebitda']).replace([float('inf'), float('-inf')], 0)
     df['P/S_Ratio'] = (df['mkt_cap'] / df['revenue']).replace([float('inf'), float('-inf')], 0)
-    
-    progress_bar.progress(100)
-    status_text.empty()
-    progress_bar.empty()
+
+    if df.empty:
+        st.warning("SEC data was found but no market data could be loaded for these tickers. Check symbols or try again.")
+        st.stop()
 
     if not df.empty:
         st.success(f"✅ Analysis complete! Processed {len(df)} companies.")
