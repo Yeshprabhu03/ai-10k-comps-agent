@@ -228,10 +228,14 @@ if run_button and target_ticker:
         st.warning("SEC data was found but no market data could be loaded for these tickers. Check symbols or try again.")
         st.stop()
     
-    df["P/E_Ratio"] = (df["mkt_cap"] / df["net_income"]).replace([float("inf"), float("-inf")], 0)
-    df["EV/Revenue"] = (df["enterprise_value"] / df["revenue"]).replace([float("inf"), float("-inf")], 0)
-    df["EV/EBITDA"] = (df["enterprise_value"] / df["ebitda"]).replace([float("inf"), float("-inf")], 0)
-    df["P/S_Ratio"] = (df["mkt_cap"] / df["revenue"]).replace([float("inf"), float("-inf")], 0)
+    # Revenue, net_income, ebitda are in USD millions; mkt_cap/enterprise_value are in dollars
+    rev_dollars = df["revenue"] * 1e6
+    ni_dollars = df["net_income"] * 1e6
+    ebitda_dollars = df["ebitda"] * 1e6
+    df["P/E_Ratio"] = (df["mkt_cap"] / ni_dollars).replace([float("inf"), float("-inf")], 0)
+    df["EV/Revenue"] = (df["enterprise_value"] / rev_dollars).replace([float("inf"), float("-inf")], 0)
+    df["EV/EBITDA"] = (df["enterprise_value"] / ebitda_dollars).replace([float("inf"), float("-inf")], 0)
+    df["P/S_Ratio"] = (df["mkt_cap"] / rev_dollars).replace([float("inf"), float("-inf")], 0)
 
     if not df.empty:
         st.success(f"✅ Analysis complete! Processed {len(df)} companies.")
@@ -243,9 +247,10 @@ if run_button and target_ticker:
         for idx, (i, row) in enumerate(df.iterrows()):
             with metric_cols[idx]:
                 st.markdown(f"#### {row['ticker']}")
+                # Data is in USD millions; /1000 = billions for display
                 st.metric(
                     "Revenue",
-                    f"${row['revenue']/1e9:.2f}B",
+                    f"${row['revenue']/1000:.2f}B",
                     delta=f"{row['net_margin_%']:.1f}% Margin"
                 )
                 col_a, col_b = st.columns(2)
@@ -263,13 +268,13 @@ if run_button and target_ticker:
         viz_tabs = st.tabs(["📈 Revenue Comparison", "💰 Profitability", "💵 Valuation Multiples", "📋 Full Data Table"])
         
         with viz_tabs[0]:
-            # Revenue Bar Chart
+            # Revenue Bar Chart (revenue in USD millions)
             fig_rev = px.bar(
                 df.sort_values('revenue', ascending=False),
                 x='ticker',
                 y='revenue',
-                title='Revenue Comparison (USD)',
-                labels={'revenue': 'Revenue ($)', 'ticker': 'Company'},
+                title='Revenue Comparison (USD Millions)',
+                labels={'revenue': 'Revenue (USD Millions)', 'ticker': 'Company'},
                 color='revenue',
                 color_continuous_scale='Blues'
             )
@@ -298,8 +303,8 @@ if run_button and target_ticker:
                     df.sort_values('ebitda', ascending=False),
                     x='ticker',
                     y='ebitda',
-                    title='EBITDA (USD)',
-                    labels={'ebitda': 'EBITDA ($)', 'ticker': 'Company'},
+                    title='EBITDA (USD Millions)',
+                    labels={'ebitda': 'EBITDA (USD Millions)', 'ticker': 'Company'},
                     color='ebitda',
                     color_continuous_scale='Oranges'
                 )
@@ -326,23 +331,24 @@ if run_button and target_ticker:
             st.plotly_chart(fig_val, use_container_width=True)
         
         with viz_tabs[3]:
-            # Full Data Table with enhanced formatting
+            # Financial Comparison Table (USD Millions) — whole numbers
+            st.markdown("#### Financial Comparison Table (USD Millions)")
             display_df = df.copy()
-            display_df['revenue'] = display_df['revenue'].apply(lambda x: f"${x/1e6:,.0f}M")
-            display_df['net_income'] = display_df['net_income'].apply(lambda x: f"${x/1e6:,.0f}M")
-            display_df['ebitda'] = display_df['ebitda'].apply(lambda x: f"${x/1e6:,.0f}M")
-            display_df['mkt_cap'] = display_df['mkt_cap'].apply(lambda x: f"${x/1e9:.2f}B" if x > 0 else "N/A")
-            display_df['net_margin_%'] = display_df['net_margin_%'].apply(lambda x: f"{x:.2f}%")
-            display_df['P/E_Ratio'] = display_df['P/E_Ratio'].apply(lambda x: f"{x:.1f}x" if x > 0 else "N/A")
-            display_df['EV/Revenue'] = display_df['EV/Revenue'].apply(lambda x: f"{x:.2f}x" if x > 0 else "N/A")
-            display_df['EV/EBITDA'] = display_df['EV/EBITDA'].apply(lambda x: f"{x:.2f}x" if x > 0 else "N/A")
+            # Values are already in USD millions; show as whole numbers (e.g. 716,924)
+            display_df["revenue_fmt"] = display_df["revenue"].apply(lambda x: f"{x:,.0f}")
+            display_df["net_income_fmt"] = display_df["net_income"].apply(lambda x: f"{x:,.0f}")
+            display_df["ebitda_fmt"] = display_df["ebitda"].apply(lambda x: f"{x:,.0f}")
+            display_df["mkt_cap_fmt"] = display_df["mkt_cap"].apply(lambda x: f"${x/1e9:.2f}B" if x > 0 else "N/A")
+            display_df["net_margin_%_fmt"] = display_df["net_margin_%"].apply(lambda x: f"{x:.2f}%")
+            display_df["P/E_Ratio_fmt"] = display_df["P/E_Ratio"].apply(lambda x: f"{x:.1f}x" if x > 0 else "N/A")
+            display_df["EV/Revenue_fmt"] = display_df["EV/Revenue"].apply(lambda x: f"{x:.2f}x" if x > 0 else "N/A")
+            display_df["EV/EBITDA_fmt"] = display_df["EV/EBITDA"].apply(lambda x: f"{x:.2f}x" if x > 0 else "N/A")
             
-            st.dataframe(
-                display_df[['ticker', 'filing_date', 'revenue', 'net_income', 'ebitda', 
-                            'net_margin_%', 'mkt_cap', 'P/E_Ratio', 'EV/Revenue', 'EV/EBITDA']],
-                use_container_width=True,
-                hide_index=True
-            )
+            out = display_df[["ticker", "filing_date", "revenue_fmt", "net_income_fmt", "ebitda_fmt",
+                              "net_margin_%_fmt", "mkt_cap_fmt", "P/E_Ratio_fmt", "EV/Revenue_fmt", "EV/EBITDA_fmt"]].copy()
+            out.columns = ["Ticker", "Filing Date", "Revenue (USD Millions)", "Net Income (USD Millions)", "EBITDA (USD Millions)",
+                           "Net Margin %", "Market Cap", "P/E", "EV/Revenue", "EV/EBITDA"]
+            st.dataframe(out, use_container_width=True, hide_index=True)
         
         st.markdown("---")
         
