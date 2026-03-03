@@ -303,10 +303,11 @@ if st.session_state.run_analysis and target_ticker:
                 # Use fast_info - much less prone to rate limiting than .info
                 f_info = stock.fast_info
                 
-                mkt_cap = f_info.get("market_cap", 0)
+                # fast_info is an object, not a dict, so use getattr
+                mkt_cap = getattr(f_info, "market_cap", 0)
                 
                 # Check for currency mismatch and convert mkt_cap to USD
-                quote_currency = f_info.get("currency", "USD")
+                quote_currency = getattr(f_info, "currency", "USD")
                 if quote_currency != "USD" and mkt_cap > 0:
                     fx_to_usd = 1.0
                     try:
