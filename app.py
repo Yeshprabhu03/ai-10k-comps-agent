@@ -5,12 +5,15 @@ import yfinance as yf
 import plotly.express as px
 import plotly.graph_objects as go
 from streamlit_searchbox import st_searchbox
-from comps_agent import fetch_and_analyze
+from comps_agent import fetch_and_analyze, get_all_sec_tickers
 
 # --- API key check (Streamlit Cloud uses st.secrets, local uses .env) ---
 def get_api_key():
-    if hasattr(st, "secrets") and st.secrets.get("GOOGLE_API_KEY"):
-        return st.secrets["GOOGLE_API_KEY"]
+    try:
+        if hasattr(st, "secrets") and st.secrets.get("GOOGLE_API_KEY"):
+            return st.secrets["GOOGLE_API_KEY"]
+    except Exception:
+        pass
     return os.environ.get("GOOGLE_API_KEY")
 
 # --- Page Configuration ---
@@ -60,23 +63,40 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Industry Peer Mapping ---
-PEER_MAP = {
-    "Consumer Electronics": ["AAPL", "SONY", "HPQ", "DELL", "LNVGY"],
-    "Software—Infrastructure": ["MSFT", "ORCL", "ADBE", "SNOW", "PLTR"],
-    "Internet Content & Information": ["GOOGL", "META", "SNAP", "PINS", "SPOT"],
-    "Consumer Interactive Entertainment": ["MSFT", "SONY", "NTDOY", "EA", "TTWO"],
-    "E-Commerce": ["AMZN", "EBAY", "ETSY", "BABA", "MELI"]
-}
+# --- SEC Ticker Loader (cached for 8,000+ U.S. companies) ---
+@st.cache_data(ttl=3600)
+def _load_sec_tickers():
+    return get_all_sec_tickers()
 
-# --- Ticker Search Logic ---
-def search_tickers(searchterm: str):
-    if not searchterm or len(searchterm) < 2:
+
+def search_tickers_sec(searchterm: str):
+    """Searchable dropdown: suggests as you type (SEC list, or yfinance fallback)."""
+    searchterm = (searchterm or "").strip()
+    if not searchterm:
         return []
+    s = searchterm.upper()
+    tickers = _load_sec_tickers()
+    if tickers:
+        # Match by ticker or company name (substring); rank prefix matches first
+        scored = []
+        for ticker, name in tickers:
+            name_upper = (name or "").upper()
+            if s not in ticker and s not in name_upper:
+                continue
+            if ticker.startswith(s) or name_upper.startswith(s):
+                score = 0  # prefix: show first
+            elif s in ticker or s in name_upper:
+                score = 1  # substring
+            else:
+                continue
+            scored.append((score, f"{ticker} - {name}", ticker))
+        scored.sort(key=lambda x: (x[0], x[2]))
+        return [(label, ticker) for _, label, ticker in scored[:50]]
+    # Fallback when SEC list empty (e.g. network): use yfinance
     try:
-        results = yf.Search(searchterm, max_results=8).quotes
+        results = yf.Search(searchterm, max_results=15).quotes
         return [(f"{q['symbol']} - {q['shortname']}", q['symbol']) for q in results]
-    except:
+    except Exception:
         return []
 
 # --- Header with Gradient ---
@@ -84,80 +104,88 @@ st.markdown('<h1 class="main-header">📊 IB Comps Agent</h1>', unsafe_allow_htm
 st.markdown('<p class="sub-header">Automated SEC 10-K Benchmarking & Investment Banking Valuation Dashboard</p>', unsafe_allow_html=True)
 
 # --- Sidebar: Settings ---
+if "peer_list" not in st.session_state:
+    st.session_state.peer_list = []
+
 with st.sidebar:
     st.markdown("### ⚙️ Analysis Settings")
     st.markdown("---")
     
-    # 1. Primary Search
+    # 1. Primary company: searchable SEC dropdown (entire U.S. market)
     selected_ticker = st_searchbox(
-        search_tickers,
+        search_tickers_sec,
         key="ticker_search",
-        label="🔍 Search Company",
-        placeholder="Type 'Apple' or 'AAPL'...",
+        label="🔍 Search Company (SEC list)",
+        placeholder="Type 'Apple' or 'AAPL'... (8,000+ companies)",
         default=None
     )
     
-    # 2. Manual Fallback
-    st.markdown("**OR**")
     manual_ticker = st.text_input(
-        "📝 Enter Ticker Symbol",
+        "📝 Or enter ticker",
         value="",
-        placeholder="e.g., AAPL, MSFT, GOOGL",
-        help="Type the stock ticker symbol directly"
+        placeholder="e.g., AAPL, MSFT",
+        help="Type ticker directly"
     ).upper().strip()
     
-    target_ticker = selected_ticker if selected_ticker else manual_ticker
+    target_ticker = selected_ticker or manual_ticker
 
     if target_ticker:
         try:
-            # Fetch company info
             ticker_obj = yf.Ticker(target_ticker)
             info = ticker_obj.info
             
-            # Display company info card
             st.markdown("---")
             st.markdown("### 📋 Company Info")
-            
-            company_name = info.get('longName', target_ticker)
-            industry = info.get('industry', 'N/A')
-            sector = info.get('sector', 'N/A')
-            
+            company_name = info.get("longName", target_ticker)
+            industry = info.get("industry", "N/A")
+            sector = info.get("sector", "N/A")
             st.markdown(f"**{company_name}**")
             st.caption(f"Ticker: **{target_ticker}**")
-            
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Industry", industry[:20] + "..." if len(industry) > 20 else industry)
             with col2:
                 st.metric("Sector", sector[:15] + "..." if len(sector) > 15 else sector)
             
-            # Peer selection
+            # Peer selection: searchable SEC dropdown, add to list
             st.markdown("---")
-            st.markdown("### 👥 Peer Selection")
-            
-            # Get suggested peers based on industry
-            suggested_peers = PEER_MAP.get(industry, ["MSFT", "GOOGL", "AMZN"])
-            all_options = list(set(suggested_peers + ["META", "TSLA", "NFLX", "NVDA", "AMD", "INTC"]))
-            
-            peers = st.multiselect(
-                "Select Comparable Companies",
-                options=all_options,
-                default=suggested_peers[:3] if len(suggested_peers) >= 3 else suggested_peers,
-                help="Select companies to compare against"
+            st.markdown("### 👥 Peer Selection (SEC list)")
+            st.caption("Type a company name or ticker below — suggestions appear as you type.")
+            _load_sec_tickers()  # Preload so peer search has data ready
+            add_peer = st_searchbox(
+                search_tickers_sec,
+                key="peer_search",
+                label="Search to add peer company",
+                placeholder="e.g. Microsoft, GOOGL, Amazon...",
+                default=None
             )
-            
+            if add_peer and add_peer not in st.session_state.peer_list:
+                st.session_state.peer_list = list(st.session_state.peer_list) + [add_peer]
+            if st.session_state.peer_list:
+                for i, p in enumerate(st.session_state.peer_list):
+                    c1, c2 = st.columns([3, 1])
+                    with c1:
+                        st.caption(f"**{p}**")
+                    with c2:
+                        if st.button("Remove", key=f"rm_{p}_{i}"):
+                            st.session_state.peer_list = [x for x in st.session_state.peer_list if x != p]
+                            st.rerun()
+                if st.button("Clear all peers"):
+                    st.session_state.peer_list = []
+                    st.rerun()
+            peers = list(st.session_state.peer_list)
             if not peers:
-                st.warning("⚠️ Please select at least one peer company")
+                st.warning("⚠️ Add at least one peer above")
             
             st.markdown("---")
             run_button = st.button("🚀 Generate Comps Analysis", use_container_width=True, type="primary")
             
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
-            st.info("Please check the ticker symbol and try again.")
+            st.info("Check the ticker symbol and try again.")
             run_button = False
     else:
-        st.info("👆 Search for a company or enter a ticker symbol to begin analysis.")
+        st.info("👆 Search for a company (SEC list) or enter a ticker to begin.")
         run_button = False
 
 # --- Main Content Area ---
@@ -178,10 +206,13 @@ if run_button and target_ticker:
         )
         st.stop()
     
-    # 1. Fetch SEC Data
+    # 1. Fetch SEC Data (skips tickers with no 10-K/20-F gracefully)
     with st.spinner("Extracting 10-K data..."):
         try:
             df = fetch_and_analyze(all_tickers)
+            skipped = [t for t in all_tickers if t not in df["ticker"].values]
+            if skipped:
+                st.warning(f"Skipped (no 10-K/20-F or error): **{', '.join(skipped)}**")
         except Exception as e:
             err_msg = str(e).lower()
             if "api key" in err_msg or "invalid_argument" in err_msg or "401" in err_msg:
@@ -273,7 +304,7 @@ if run_button and target_ticker:
         # --- Visualizations ---
         st.markdown("### 📊 Comparative Analysis")
         
-        viz_tabs = st.tabs(["📈 Revenue Comparison", "💰 Profitability", "💵 Valuation Multiples", "📋 Full Data Table"])
+        viz_tabs = st.tabs(["📈 Revenue Comparison", "💰 Profitability", "💵 Valuation Multiples", "📊 Efficiency & Risk", "📋 Full Data Table"])
         
         with viz_tabs[0]:
             # Revenue Bar Chart (revenue in USD millions)
@@ -355,6 +386,32 @@ if run_button and target_ticker:
                 st.info("No valuation multiples (market cap may be missing from yfinance).")
         
         with viz_tabs[3]:
+            # Efficiency & Risk: ROIC, Interest Coverage, Rule of 40
+            st.markdown("#### Efficiency & Risk")
+            eff_cols = ["ticker", "roic_%", "interest_coverage", "revenue_growth_%", "rule_of_40", "rule_of_40_status"]
+            eff_available = [c for c in eff_cols if c in df.columns]
+            if eff_available:
+                eff_df = df[eff_available].copy()
+                eff_df["roic_%"] = eff_df["roic_%"].apply(lambda x: f"{x:.1f}%" if x is not None and pd.notna(x) else "—")
+                eff_df["interest_coverage"] = eff_df["interest_coverage"].apply(lambda x: f"{x:.1f}x" if x is not None and pd.notna(x) and x != 0 else "—")
+                eff_df["revenue_growth_%"] = eff_df["revenue_growth_%"].apply(lambda x: f"{x:.1f}%" if x is not None and pd.notna(x) else "—")
+                eff_df["rule_of_40"] = eff_df["rule_of_40"].apply(lambda x: f"{x:.1f}" if x is not None and pd.notna(x) else "—")
+                eff_df.columns = ["Ticker", "ROIC %", "Interest Coverage", "Revenue Growth %", "Rule of 40", "Rule of 40 Status"]
+                st.dataframe(eff_df, use_container_width=True, hide_index=True)
+                st.caption("ROIC = NOPAT / Invested Capital. Interest Coverage = Operating Income / Interest Expense. Rule of 40 = Revenue Growth % + Net Margin % (Pass if ≥ 40).")
+                # Highlight Rule of 40 status
+                if "rule_of_40_status" in df.columns:
+                    st.markdown("**Rule of 40 status**")
+                    for _, row in df.iterrows():
+                        status = row.get("rule_of_40_status") or "—"
+                        score = row.get("rule_of_40")
+                        color = "green" if status == "Pass" else "red" if status == "Fail" else "gray"
+                        score_str = f" ({score:.1f})" if score is not None and pd.notna(score) else ""
+                        st.markdown(f"- **{row['ticker']}**: <span style='color:{color}'>{status}</span>{score_str}", unsafe_allow_html=True)
+            else:
+                st.info("Efficiency & Risk metrics will appear after the next run (advanced extraction).")
+        
+        with viz_tabs[4]:
             # Financial Comparison Table (USD Millions) — whole numbers
             st.markdown("#### Financial Comparison Table (USD Millions)")
             display_df = df.copy()
