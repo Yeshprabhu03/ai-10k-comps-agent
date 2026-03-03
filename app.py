@@ -174,14 +174,7 @@ with st.expander("⚙️ Analysis Settings", expanded=True):
             default=None
         )
         
-        manual_ticker = st.text_input(
-            "📝 Or enter ticker",
-            value="",
-            placeholder="e.g., AAPL, MSFT",
-            help="Type ticker directly"
-        ).upper().strip()
-        
-        target_ticker = selected_ticker or manual_ticker
+        target_ticker = selected_ticker
         
         # --- Move Peer Selection here to save space ---
         st.markdown("---")
