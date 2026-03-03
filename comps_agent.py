@@ -24,7 +24,7 @@ def get_all_sec_tickers():
     try:
         req = Request(
             SEC_TICKERS_URL,
-            headers={"User-Agent": "IB-Comps-Agent/1.0 (https://github.com/your-repo; contact@example.com)"}
+            headers={"User-Agent": "YeshwanthIBComps/1.0 (https://github.com/Yeshprabhu03/ai-10k-comps-agent; your-email@fordham.edu)"}
         )
         with urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode())
