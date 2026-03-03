@@ -364,30 +364,48 @@ if st.session_state.run_analysis and target_ticker:
     if not df.empty:
         st.success(f"✅ Analysis complete! Processed {len(df)} companies.")
         
-        # --- Key Metrics Cards ---
-        st.markdown("### 📈 Key Financial Metrics")
-        metric_cols = st.columns(len(df))
+        # --- Key Metrics Cards (High-Density UI Revamp) ---
+        st.markdown("### 📈 Financial Snapshot Overview")
+        st.caption("High-density comparative metrics formatted for standard IB screening.")
         
-        for idx, (i, row) in enumerate(df.iterrows()):
-            with metric_cols[idx]:
-                st.markdown(f"#### {row['ticker']}")
-                # Data is in USD millions; /1000 = billions. Guard: if value huge, treat as dollars and use /1e9
-                rev = row["revenue"]
-                rev_b = rev / 1000 if rev < 1e8 else rev / 1e9
-                st.metric(
-                    "Revenue",
-                    f"${rev_b:.2f}B",
-                    delta=f"{row['net_margin_%']:.1f}% Margin"
-                )
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    pe = row["P/E_Ratio"]
-                    st.metric("P/E", f"{pe:.1f}x" if pe and pe > 0 else "N/A")
-                with col_b:
-                    evr = row["EV/Revenue"]
-                    st.metric("EV/Rev", f"{evr:.2f}x" if evr and evr > 0 else "N/A")
-                fy = row.get("fiscal_year", "")
-                st.caption(f"Filed: {row['filing_date']}" + (f"  ·  FY{fy}" if fy else ""))
+        # Build a consolidated dataframe for the view
+        snap_data = []
+        for idx, row in df.iterrows():
+            rev = row["revenue"]
+            rev_b = rev / 1000 if rev < 1e8 else rev / 1e9
+            
+            snap_data.append({
+                "Ticker": row["ticker"],
+                "Revenue ($B)": rev_b,
+                "Net Margin (%)": row["net_margin_%"],
+                "P/E": row["P/E_Ratio"] if row["P/E_Ratio"] > 0 else None,
+                "EV/Rev": row["EV/Revenue"] if row["EV/Revenue"] > 0 else None,
+                "Filing Date": row["filing_date"],
+                "FY": row.get("fiscal_year", "")
+            })
+            
+        snap_df = pd.DataFrame(snap_data)
+        
+        st.dataframe(
+            snap_df,
+            column_config={
+                "Ticker": st.column_config.TextColumn("Company", width="medium"),
+                "Revenue ($B)": st.column_config.NumberColumn("Revenue", format="$%.2f B", width="medium"),
+                "Net Margin (%)": st.column_config.ProgressColumn(
+                    "Profit Margin",
+                    help="Company Net Income Margin %",
+                    format="%.1f %%",
+                    min_value=0,
+                    max_value=max(100, snap_df["Net Margin (%)"].max() if not snap_df.empty else 100),
+                ),
+                "P/E": st.column_config.NumberColumn("P/E Ratio", format="%.1f x"),
+                "EV/Rev": st.column_config.NumberColumn("EV/Rev", format="%.2f x"),
+                "Filing Date": st.column_config.TextColumn("Date Filed"),
+                "FY": st.column_config.TextColumn("FY")
+            },
+            hide_index=True,
+            use_container_width=True
+        )
         
         st.markdown("---")
         
