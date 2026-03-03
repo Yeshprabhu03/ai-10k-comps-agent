@@ -140,30 +140,33 @@ def search_tickers_sec(searchterm: str):
 st.markdown('<h1 class="main-header">📊 IB Comps Agent</h1>', unsafe_allow_html=True)
 st.markdown('<p class="sub-header">Automated SEC 10-K Benchmarking & Investment Banking Valuation Dashboard</p>', unsafe_allow_html=True)
 
-# --- Sidebar: Settings ---
+# --- Settings Expander (Replacing Sidebar) ---
 if "peer_list" not in st.session_state:
     st.session_state.peer_list = []
+if "run_analysis" not in st.session_state:
+    st.session_state.run_analysis = False
 
-with st.sidebar:
-    st.markdown("### ⚙️ Analysis Settings")
-    st.markdown("---")
+with st.expander("⚙️ Analysis Settings", expanded=True):
+    st.markdown("Select a primary target and up to 5 peers for comparable analysis.")
+    col_set1, col_set2 = st.columns(2)
     
-    # 1. Primary company: searchable SEC dropdown (entire U.S. market)
-    selected_ticker = st_searchbox(
-        search_tickers_sec,
-        key="ticker_search",
-        label="🔍 Search Company (SEC list)",
-        placeholder="Type 'Apple' or 'AAPL'... (8,000+ companies)",
-        default=None
-    )
-    
-    manual_ticker = st.text_input(
-        "📝 Or enter ticker",
-        value="",
-        placeholder="e.g., AAPL, MSFT",
-        help="Type ticker directly"
-    ).upper().strip()
-    
+    with col_set1:
+        # 1. Primary company: searchable SEC dropdown (entire U.S. market)
+        selected_ticker = st_searchbox(
+            search_tickers_sec,
+            key="ticker_search",
+            label="🔍 Search Company (SEC list)",
+            placeholder="Type 'Apple' or 'AAPL'... (8,000+ companies)",
+            default=None
+        )
+        
+        manual_ticker = st.text_input(
+            "📝 Or enter ticker",
+            value="",
+            placeholder="e.g., AAPL, MSFT",
+            help="Type ticker directly"
+        ).upper().strip()
+        
     target_ticker = selected_ticker or manual_ticker
 
     if target_ticker:
@@ -185,16 +188,15 @@ with st.sidebar:
             except Exception:
                 pass
             
-            st.markdown("---")
-            st.markdown("### 📋 Company Info")
-            
-            st.markdown(f"**{company_name}**")
-            st.caption(f"Ticker: **{target_ticker}**")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Industry", industry[:20] + "..." if len(industry) > 20 else industry)
-            with col2:
-                st.metric("Sector", sector[:15] + "..." if len(sector) > 15 else sector)
+            with col_set2:
+                st.markdown("### 📋 Company Info")
+                st.markdown(f"**{company_name}**")
+                st.caption(f"Ticker: **{target_ticker}**")
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.metric("Industry", industry[:20] + "..." if len(industry) > 20 else industry)
+                with c2:
+                    st.metric("Sector", sector[:15] + "..." if len(sector) > 15 else sector)
             
             # Peer selection: searchable SEC dropdown, add to list
             st.markdown("---")
@@ -227,18 +229,18 @@ with st.sidebar:
                 st.warning("⚠️ Add at least one peer above")
             
             st.markdown("---")
-            run_button = st.button("🚀 Generate Comps Analysis", use_container_width=True, type="primary")
+            run_btn = st.button("🚀 Generate Comps Analysis", use_container_width=True, type="primary")
+            if run_btn:
+                st.session_state.run_analysis = True
             
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
             st.info("Check the ticker symbol and try again.")
-            run_button = False
     else:
         st.info("👆 Search for a company (SEC list) or enter a ticker to begin.")
-        run_button = False
 
 # --- Main Content Area ---
-if run_button and target_ticker:
+if st.session_state.run_analysis and target_ticker:
     all_tickers = [target_ticker] + peers
     
     if not peers:
@@ -256,9 +258,14 @@ if run_button and target_ticker:
         st.stop()
     
     # 1. Fetch SEC Data (skips tickers with no 10-K/20-F gracefully)
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def cached_fetch_and_analyze(tickers_tuple):
+        return fetch_and_analyze(list(tickers_tuple))
+        
     with st.spinner("Extracting 10-K data..."):
         try:
-            df = fetch_and_analyze(all_tickers)
+            # Pass as tuple since lists are unhashable for st.cache_data
+            df = cached_fetch_and_analyze(tuple(all_tickers))
             skipped = [t for t in all_tickers if t not in df["ticker"].values]
             if skipped:
                 st.warning(f"Skipped (no 10-K/20-F or error): **{', '.join(skipped)}**")
