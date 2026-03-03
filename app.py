@@ -181,7 +181,49 @@ with st.expander("⚙️ Analysis Settings", expanded=True):
             help="Type ticker directly"
         ).upper().strip()
         
-    target_ticker = selected_ticker or manual_ticker
+        target_ticker = selected_ticker or manual_ticker
+        
+        # --- Move Peer Selection here to save space ---
+        st.markdown("---")
+        st.markdown("### 👥 Peer Selection")
+        _load_sec_tickers()  # Preload
+        add_peer = st_searchbox(
+            search_tickers_sec,
+            key="peer_search",
+            label="Search to add competitor",
+            placeholder="e.g. Microsoft, GOOGL...",
+            default=None
+        )
+        if add_peer and add_peer not in st.session_state.peer_list:
+            st.session_state.peer_list = list(st.session_state.peer_list) + [add_peer]
+            
+        if st.session_state.peer_list:
+            for i, p in enumerate(st.session_state.peer_list):
+                c1, c2 = st.columns([3, 1])
+                # Lookup full company name
+                sec_list = _load_sec_tickers()
+                comp_name = next((n for t, n in sec_list if t == p), p)
+                # Truncate length if too long
+                comp_name = comp_name[:25] + "..." if len(comp_name) > 25 else comp_name
+                
+                with c1:
+                    st.caption(f"**{p}** - {comp_name}")
+                with c2:
+                    if st.button("REMOVE", key=f"rm_{p}_{i}"):
+                        st.session_state.peer_list = [x for x in st.session_state.peer_list if x != p]
+                        st.rerun()
+            if st.button("CLEAR ALL"):
+                st.session_state.peer_list = []
+                st.rerun()
+                
+        peers = list(st.session_state.peer_list)
+        if not peers:
+            st.warning("⚠️ Add at least one peer above")
+            
+        st.markdown("---")
+        run_btn = st.button("🚀 GENERATE COMPS ANALYSIS", use_container_width=True, type="primary")
+        if run_btn:
+            st.session_state.run_analysis = True
 
     if target_ticker:
         try:
@@ -229,46 +271,12 @@ with st.expander("⚙️ Analysis Settings", expanded=True):
                                         st.session_state.peer_list = list(st.session_state.peer_list) + [peer_ticker]
                                         st.rerun()
             
-            # Peer selection: searchable SEC dropdown, add to list
-            st.markdown("---")
-            st.markdown("### 👥 Peer Selection (SEC list)")
-            st.caption("Type a company name or ticker below — suggestions appear as you type.")
-            _load_sec_tickers()  # Preload so peer search has data ready
-            add_peer = st_searchbox(
-                search_tickers_sec,
-                key="peer_search",
-                label="Search to add peer company",
-                placeholder="e.g. Microsoft, GOOGL, Amazon...",
-                default=None
-            )
-            if add_peer and add_peer not in st.session_state.peer_list:
-                st.session_state.peer_list = list(st.session_state.peer_list) + [add_peer]
-            if st.session_state.peer_list:
-                for i, p in enumerate(st.session_state.peer_list):
-                    c1, c2 = st.columns([3, 1])
-                    with c1:
-                        st.caption(f"**{p}**")
-                    with c2:
-                        if st.button("Remove", key=f"rm_{p}_{i}"):
-                            st.session_state.peer_list = [x for x in st.session_state.peer_list if x != p]
-                            st.rerun()
-                if st.button("Clear all peers"):
-                    st.session_state.peer_list = []
-                    st.rerun()
-            peers = list(st.session_state.peer_list)
-            if not peers:
-                st.warning("⚠️ Add at least one peer above")
-            
-            st.markdown("---")
-            run_btn = st.button("🚀 Generate Comps Analysis", use_container_width=True, type="primary")
-            if run_btn:
-                st.session_state.run_analysis = True
-            
         except Exception as e:
             st.error(f"❌ Error: {str(e)}")
             st.info("Check the ticker symbol and try again.")
     else:
-        st.info("👆 Search for a company (SEC list) or enter a ticker to begin.")
+        with col_set2:
+            st.info("👆 Search for a company (SEC list) or enter a ticker to begin.")
 
 # --- Main Content Area ---
 if st.session_state.run_analysis and target_ticker:
@@ -401,12 +409,18 @@ if st.session_state.run_analysis and target_ticker:
         
         # Build a consolidated dataframe for the view
         snap_data = []
+        sec_list = _load_sec_tickers()
+        
         for idx, row in df.iterrows():
             rev = row["revenue"]
             rev_b = rev / 1000 if rev < 1e8 else rev / 1e9
             
+            # Fetch full company name
+            tick = row["ticker"]
+            comp_name = next((n for t, n in sec_list if t == tick), tick)
+            
             snap_data.append({
-                "Ticker": row["ticker"],
+                "Company": f"{tick} - {comp_name[:30] + '...' if len(comp_name) > 30 else comp_name}",
                 "Revenue ($B)": rev_b,
                 "Net Margin (%)": row["net_margin_%"],
                 "P/E": row["P/E_Ratio"] if row["P/E_Ratio"] > 0 else None,
@@ -420,7 +434,7 @@ if st.session_state.run_analysis and target_ticker:
         st.dataframe(
             snap_df,
             column_config={
-                "Ticker": st.column_config.TextColumn("Company", width="medium"),
+                "Company": st.column_config.TextColumn("Company", width="large"),
                 "Revenue ($B)": st.column_config.NumberColumn("Revenue", format="$%.2f B", width="medium"),
                 "Net Margin (%)": st.column_config.ProgressColumn(
                     "Profit Margin",
