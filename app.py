@@ -419,14 +419,32 @@ if st.session_state.run_analysis and target_ticker:
             tick = row["ticker"]
             comp_name = next((n for t, n in sec_list if t == tick), tick)
             
+            # If the SEC list failed entirely (e.g. SSL block) or missing, fallback to yfinance info
+            if comp_name == tick:
+                try:
+                    t_obj = yf.Ticker(tick)
+                    temp_info = t_obj.info
+                    comp_name = temp_info.get("shortName", tick)
+                except Exception:
+                    pass
+            
+            # Force explicit string conversion of UNIX epoch dates for Streamlit rendering
+            filing_date_val = row["filing_date"]
+            if str(filing_date_val).isdigit() or isinstance(filing_date_val, (int, float)):
+                # Handle Pandas converting Timestamp to 177... ms epoch in Streamlit 1.4+
+                try:
+                    filing_date_val = pd.to_datetime(filing_date_val, unit='ms').strftime('%Y-%m-%d')
+                except Exception:
+                    pass
+            
             snap_data.append({
                 "Company": f"{tick} - {comp_name[:30] + '...' if len(comp_name) > 30 else comp_name}",
                 "Revenue ($B)": rev_b,
                 "Net Margin (%)": row["net_margin_%"],
                 "P/E": row["P/E_Ratio"] if row["P/E_Ratio"] > 0 else None,
                 "EV/Rev": row["EV/Revenue"] if row["EV/Revenue"] > 0 else None,
-                "Filing Date": row["filing_date"],
-                "FY": row.get("fiscal_year", "")
+                "Filing Date": filing_date_val,
+                "FY": str(row.get("fiscal_year", ""))
             })
             
         snap_df = pd.DataFrame(snap_data)

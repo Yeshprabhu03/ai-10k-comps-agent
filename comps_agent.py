@@ -22,11 +22,16 @@ def get_all_sec_tickers():
     Used to support searchable dropdown over the entire U.S. stock market.
     """
     try:
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        
         req = Request(
             SEC_TICKERS_URL,
             headers={"User-Agent": "YeshwanthIBComps/1.0 (https://github.com/Yeshprabhu03/ai-10k-comps-agent; your-email@fordham.edu)"}
         )
-        with urlopen(req, timeout=30) as resp:
+        with urlopen(req, timeout=30, context=ctx) as resp:
             data = json.loads(resp.read().decode())
         # Format: {"0": {"cik_str": ..., "ticker": "AAPL", "title": "Apple Inc."}, ...}
         out = []
