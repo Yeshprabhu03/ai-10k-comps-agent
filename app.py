@@ -119,6 +119,18 @@ def _get_ai_peer_suggestions(company_name: str, industry: str, sector: str, api_
     except Exception:
         return []
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_ma_deals(ticker: str):
+    """Fetches M&A deals dynamically from the local FastAPI microservice."""
+    try:
+        import requests
+        resp = requests.get(f"http://127.0.0.1:8000/api/v1/deals/{ticker}", timeout=15)
+        if resp.status_code == 200:
+            return resp.json().get("deals", [])
+    except Exception as e:
+        print(f"M&A Service Connection Error: {e}")
+    return []
+
 
 def search_tickers_sec(searchterm: str):
     """Searchable dropdown: suggests as you type (SEC list, or yfinance fallback)."""
@@ -463,6 +475,28 @@ if st.session_state.run_analysis and target_ticker:
             use_container_width=True
         )
         
+        st.markdown("---")
+        
+        # --- M&A Deal Tracking (FastAPI Microservice) ---
+        with st.expander("🤝 Recent M&A Deal Activity (AI Powered)", expanded=False):
+            st.markdown(f"**Live M&A Deal Tracker for {target_ticker}** (Powered by News RAG)")
+            
+            with st.spinner("Pinging FastAPI Microservice..."):
+                deals = _fetch_ma_deals(target_ticker)
+                
+            if deals:
+                for d in deals:
+                    st.markdown(f"#### {d.get('deal_name', 'Unknown Deal')}")
+                    st.caption(f"**Value:** {d.get('deal_value', 'Undisclosed')}")
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Target", d.get('target_company', 'N/A'))
+                    c2.metric("Acquirer", d.get('acquirer_company', 'N/A'))
+                    c3.metric("Buy-Side Advisors", d.get('buy_side_advisors', 'N/A'))
+                    c4.metric("Sell-Side Advisors", d.get('sell_side_advisors', 'N/A'))
+                    st.divider()
+            else:
+                st.info("No recent M&A activity found or Microservice is offline. Ensure you are running `uvicorn ma_service:app --port 8000` in a separate terminal.")
+                
         st.markdown("---")
         
         # --- Visualizations ---
