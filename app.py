@@ -6,6 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from streamlit_searchbox import st_searchbox
 from comps_agent import fetch_and_analyze, get_all_sec_tickers
+from google import genai
 
 # --- API key check (Streamlit Cloud uses st.secrets, local uses .env) ---
 def get_api_key():
@@ -238,13 +239,46 @@ if run_button and target_ticker:
     # 3. Fetch Real-time Market Data for Valuation
     with st.spinner("Calculating Valuation Multiples..."):
         val_data = []
+        
+        static_fx = {"JPY": 0.0067, "EUR": 1.08, "GBP": 1.25, "CAD": 0.74, "CHF": 1.13, "AUD": 0.65}
+        
         for t in all_tickers:
             try:
                 stock = yf.Ticker(t)
-                mkt_cap = stock.info.get("marketCap", 0)
-                enterprise_value = stock.info.get("enterpriseValue", mkt_cap)
+                # Use fast_info - much less prone to rate limiting than .info
+                f_info = stock.fast_info
+                
+                mkt_cap = f_info.get("market_cap", 0)
+                
+                # Check for currency mismatch and convert mkt_cap to USD
+                quote_currency = f_info.get("currency", "USD")
+                if quote_currency != "USD" and mkt_cap > 0:
+                    fx_to_usd = 1.0
+                    try:
+                        if quote_currency == 'JPY':
+                            fx_to_usd = 1.0 / float(yf.Ticker("USDJPY=X").history(period="1d")["Close"].iloc[-1])
+                        elif quote_currency == 'EUR':
+                            fx_to_usd = float(yf.Ticker("EURUSD=X").history(period="1d")["Close"].iloc[-1])
+                        else:
+                            fx_to_usd = float(yf.Ticker(f"{quote_currency}USD=X").history(period="1d")["Close"].iloc[-1])
+                    except Exception:
+                        fx_to_usd = static_fx.get(quote_currency, 1.0)
+                    
+                    mkt_cap = mkt_cap * fx_to_usd
+                
+                # EV = Market Cap + Total Liabilities (ignoring cash for simplicity given SEC constraints)
+                enterprise_value = mkt_cap
+                try:
+                    sec_row = df[df["ticker"] == t].iloc[0]
+                    # The total liab from DF is already in USD Millions
+                    total_liab_usd = sec_row.get("total_liabilities", 0) * 1e6
+                    if total_liab_usd > 0:
+                        enterprise_value = mkt_cap + total_liab_usd
+                except Exception:
+                    pass
+
                 val_data.append({"ticker": t, "mkt_cap": mkt_cap, "enterprise_value": enterprise_value})
-            except Exception:
+            except Exception as e:
                 val_data.append({"ticker": t, "mkt_cap": 0, "enterprise_value": 0})
         
         val_df = pd.DataFrame(val_data)
@@ -304,7 +338,7 @@ if run_button and target_ticker:
         # --- Visualizations ---
         st.markdown("### 📊 Comparative Analysis")
         
-        viz_tabs = st.tabs(["📈 Revenue Comparison", "💰 Profitability", "💵 Valuation Multiples", "📊 Efficiency & Risk", "📋 Full Data Table"])
+        viz_tabs = st.tabs(["📈 Revenue Comparison", "💰 Profitability", "💵 Valuation Multiples", "📊 Efficiency & Risk", "🎯 Growth vs Value", "📋 Full Data Table"])
         
         with viz_tabs[0]:
             # Revenue Bar Chart (revenue in USD millions)
@@ -412,6 +446,40 @@ if run_button and target_ticker:
                 st.info("Efficiency & Risk metrics will appear after the next run (advanced extraction).")
         
         with viz_tabs[4]:
+            # **New Feature: Valuation vs Growth Scatter Plot**
+            st.markdown("#### Growth vs Valuation (Rule of 40 vs EV/Revenue)")
+            scatter_cols = ["ticker", "rule_of_40", "EV/Revenue", "net_margin_%"]
+            if all(c in df.columns for c in scatter_cols) and not df[scatter_cols].empty:
+                plot_df_s = df[scatter_cols].copy()
+                plot_df_s["EV/Revenue"] = plot_df_s["EV/Revenue"].replace([float("inf"), float("-inf")], 0).fillna(0)
+                plot_df_s["rule_of_40"] = plot_df_s["rule_of_40"].fillna(0)
+                # Keep reasonable domains
+                plot_df_s = plot_df_s[(plot_df_s["EV/Revenue"] > 0) & (plot_df_s["EV/Revenue"] < 100)]
+                
+                if not plot_df_s.empty:
+                    fig_scatter = px.scatter(
+                        plot_df_s,
+                        x="rule_of_40",
+                        y="EV/Revenue",
+                        text="ticker",
+                        size="net_margin_%",
+                        color="EV/Revenue",
+                        color_continuous_scale="Viridis",
+                        title="Is the Valuation Justified by the Rule of 40?",
+                        labels={"rule_of_40": "Rule of 40 Score (Growth + Margin)", "EV/Revenue": "EV / Revenue Multiple"}
+                    )
+                    fig_scatter.update_traces(textposition='top center')
+                    # Add reference line for Rule of 40 threshold
+                    fig_scatter.add_vline(x=40, line_dash="dash", line_color="red", annotation_text="Rule of 40 Threshold")
+                    fig_scatter.update_layout(height=500)
+                    st.plotly_chart(fig_scatter, use_container_width=True)
+                else:
+                    st.info("Outlier values prevented scatter plot rendering.")
+            else:
+                st.info("Scatter plot requires valid EV/Revenue and Rule of 40 data.")
+
+        
+        with viz_tabs[5]:
             # Financial Comparison Table (USD Millions) — whole numbers
             st.markdown("#### Financial Comparison Table (USD Millions)")
             display_df = df.copy()
@@ -435,6 +503,42 @@ if run_button and target_ticker:
             out.columns = col_names
             st.dataframe(out, use_container_width=True, hide_index=True)
         
+        st.markdown("---")
+        
+        # --- AI Executive Summary Generation ---
+        st.markdown("### 🤖 Wall Street AI Executive Summary")
+        st.caption("Generate a professional Investment Banking briefing instantly analyzing the Comps table above.")
+        
+        if st.button("Generate Executive Briefing", icon="✨", type="secondary"):
+            with st.spinner("Synthesizing metrics using Gemini..."):
+                try:
+                    # Initialize Gemini with the verified key
+                    client = genai.Client(api_key=api_key)
+                    # Convert dataframe to text for the prompt
+                    df_string = out.to_string()
+                    
+                    prompt = f"""
+                    You are an elite Wall Street Investment Banker. Review this precise comparable company analysis (Comps) table:
+                    {df_string}
+                    
+                    Write a punchy, 3-paragraph executive summary covering:
+                    1. The clear sector leader based on size and profitability.
+                    2. Valuation discrepancies: Who trades at a premium vs discount (P/E and EV/Rev)? Is the premium justified by their Rule of 40 efficiency?
+                    3. Key risks or laggards identified in the cohort.
+                    
+                    Do not hallucinate. Do not mention standard disclaimers. Use bolding to emphasize ticker symbols and key metrics. Keep it incredibly professional.
+                    """
+                    
+                    response = client.models.generate_content(
+                        model="gemini-2.0-flash",
+                        contents=prompt
+                    )
+                    
+                    st.info(response.text)
+                    
+                except Exception as e:
+                    st.error(f"⚠️ Failed to generate AI summary: {str(e)}")
+                    
         st.markdown("---")
         
         # --- Export Section ---
