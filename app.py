@@ -30,72 +30,68 @@ st.markdown("""
     <style>
     /* Global Background and Text */
     .stApp {
-        background-color: #0e1117;
-        color: #f0f2f6;
+        background-color: #000000;
+        color: #e0e0e0;
+        font-family: monospace;
     }
     
     /* Header Typography */
     .main-header {
-        font-size: 3.5rem;
+        font-size: 2.2rem;
         font-weight: 800;
-        background: linear-gradient(135deg, #00c6ff, #0072ff);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+        color: #FF8C00;
         margin-bottom: 0.2rem;
-        letter-spacing: -1px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        border-bottom: 2px solid #FF8C00;
+        padding-bottom: 5px;
     }
     .sub-header {
-        color: #8b949e;
-        font-size: 1.2rem;
+        color: #a0a0a0;
+        font-size: 1.0rem;
         font-weight: 400;
-        margin-bottom: 2.5rem;
+        margin-bottom: 2.0rem;
+        font-family: monospace;
     }
     
-    /* Glowing Glassmorphism Metric Cards */
-    div[data-testid="metric-container"] {
-        background: rgba(26, 28, 36, 0.7);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        backdrop-filter: blur(10px);
-        border-radius: 12px;
-        padding: 1.5rem;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-    }
-    div[data-testid="metric-container"]:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 15px rgba(0, 198, 255, 0.2);
-        border-color: rgba(0, 198, 255, 0.5);
+    /* High Density Expanders & Containers */
+    div[data-testid="stExpander"] {
+        background: #0a0a0a;
+        border: 1px solid #333333;
+        border-radius: 0px;
     }
     
     /* Sleek Primary Buttons */
     .stButton>button[kind="primary"] {
         width: 100%;
-        background: linear-gradient(135deg, #0072ff, #00c6ff);
-        color: white;
-        font-weight: 700;
+        background-color: #FF8C00;
+        color: #000000;
+        font-weight: 800;
         letter-spacing: 0.5px;
-        padding: 0.8rem;
-        border-radius: 8px;
-        border: none;
-        box-shadow: 0 4px 10px rgba(0, 114, 255, 0.4);
-        transition: all 0.3s ease;
+        padding: 0.5rem;
+        border-radius: 2px;
+        border: 1px solid #FF8C00;
+        transition: none;
+        text-transform: uppercase;
     }
     .stButton>button[kind="primary"]:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 15px rgba(0, 114, 255, 0.6);
-        background: linear-gradient(135deg, #00c6ff, #0072ff);
+        background-color: #000000;
+        color: #FF8C00;
+        border: 1px solid #FF8C00;
     }
     
     /* Secondary Buttons */
     .stButton>button[kind="secondary"] {
-        border-radius: 8px;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        background: rgba(255, 255, 255, 0.05);
-        transition: all 0.2s ease;
+        border-radius: 2px;
+        border: 1px solid #555555;
+        background-color: #1a1a1a;
+        color: #ffffff;
+        text-transform: uppercase;
+        font-size: 0.9rem;
     }
     .stButton>button[kind="secondary"]:hover {
-        background: rgba(255, 255, 255, 0.1);
-        border-color: rgba(255, 255, 255, 0.4);
+        background-color: #333333;
+        border-color: #ffffff;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -104,6 +100,24 @@ st.markdown("""
 @st.cache_data(ttl=3600)
 def _load_sec_tickers():
     return get_all_sec_tickers()
+
+# --- AI Peer Suggestions ---
+@st.cache_data(ttl=86400, show_spinner=False)
+def _get_ai_peer_suggestions(company_name: str, industry: str, sector: str, api_key: str):
+    """Uses Gemini to instantly suggest 5 relevant peer tickers."""
+    if not api_key or industry == "N/A":
+        return []
+    try:
+        client = genai.Client(api_key=api_key)
+        prompt = f"Given the public company '{company_name}' operating in the '{industry}' industry and '{sector}' sector, return exactly 5 US stock ticker symbols for its closest publicly traded competitors. Return ONLY the ticker symbols separated by commas. Do not include any other text."
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
+        tickers = [t.strip().upper() for t in response.text.split(",") if t.strip()]
+        return tickers[:5]
+    except Exception:
+        return []
 
 
 def search_tickers_sec(searchterm: str):
@@ -197,6 +211,23 @@ with st.expander("⚙️ Analysis Settings", expanded=True):
                     st.metric("Industry", industry[:20] + "..." if len(industry) > 20 else industry)
                 with c2:
                     st.metric("Sector", sector[:15] + "..." if len(sector) > 15 else sector)
+                
+                # --- AI Smart Peer Injection ---
+                api_key = get_api_key()
+                if api_key and industry != "N/A":
+                    st.markdown("---")
+                    st.caption("🤖 **AI Suggested Peers:**")
+                    suggested_peers = _get_ai_peer_suggestions(company_name, industry, sector, api_key)
+                    
+                    if suggested_peers:
+                        # Display as highly compact row of buttons
+                        peer_cols = st.columns(len(suggested_peers))
+                        for i, peer_ticker in enumerate(suggested_peers):
+                            with peer_cols[i]:
+                                if st.button(f"+ {peer_ticker}", key=f"ai_add_{peer_ticker}"):
+                                    if peer_ticker not in st.session_state.peer_list:
+                                        st.session_state.peer_list = list(st.session_state.peer_list) + [peer_ticker]
+                                        st.rerun()
             
             # Peer selection: searchable SEC dropdown, add to list
             st.markdown("---")
