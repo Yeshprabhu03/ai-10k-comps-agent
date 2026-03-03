@@ -169,13 +169,25 @@ with st.sidebar:
     if target_ticker:
         try:
             ticker_obj = yf.Ticker(target_ticker)
-            info = ticker_obj.info
+            
+            # Use safe lookup to avoid 429 errors crashing the whole app
+            company_name = target_ticker
+            industry = "N/A"
+            sector = "N/A"
+            try:
+                # Try getting fast_info first for speed
+                f_info = ticker_obj.fast_info
+                # Attempt to get full info but fail silently if rate limited
+                full_info = ticker_obj.info
+                company_name = full_info.get("longName", target_ticker)
+                industry = full_info.get("industry", "N/A")
+                sector = full_info.get("sector", "N/A")
+            except Exception:
+                pass
             
             st.markdown("---")
             st.markdown("### 📋 Company Info")
-            company_name = info.get("longName", target_ticker)
-            industry = info.get("industry", "N/A")
-            sector = info.get("sector", "N/A")
+            
             st.markdown(f"**{company_name}**")
             st.caption(f"Ticker: **{target_ticker}**")
             col1, col2 = st.columns(2)
