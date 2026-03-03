@@ -269,10 +269,12 @@ def _get_latest_column_data(f_obj, filing_date, ticker):
 
 def fetch_and_analyze(tickers):
     results = []
+    print("starting comps generation", flush=True)
     for ticker in tickers:
-        for attempt in range(2):
+        print(f"Fetching {ticker}...\n", flush=True)
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                print(f"🚀 Processing {ticker}...", flush=True)
                 company = Company(ticker)
                 
                 # Support 10-K (US) and 20-F (Foreign) filings
@@ -474,13 +476,22 @@ def fetch_and_analyze(tickers):
                 break 
                 
             except Exception as e:
-                if "429" in str(e):
-                    print(f"⚠️ Rate limit. Waiting 20s...", flush=True)
-                    time.sleep(20)
+                err_msg = str(e).lower()
+                if "429" in err_msg or "too many requests" in err_msg or "resourceexhausted" in err_msg:
+                    if attempt < max_retries - 1:
+                        wait = 20 * (2 ** attempt)
+                        print(f"⚠️ Rate limit hit. Waiting {wait}s...", flush=True)
+                        time.sleep(wait)
+                        continue # Retry
+                    else:
+                        print(f"❌ Max retries hit for {ticker}: {e}", flush=True)
+                        break
                 else:
                     print(f"❌ Error with {ticker}: {e}", flush=True)
                     break
-        
+            
+            # If we succeed, escape the retry loop
+            break
         # Inter-ticker delay to preserve API quota
         if ticker != tickers[-1]:
             time.sleep(10)

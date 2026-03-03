@@ -25,41 +25,77 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS for Premium IB Aesthetics
 st.markdown("""
     <style>
+    /* Global Background and Text */
+    .stApp {
+        background-color: #0e1117;
+        color: #f0f2f6;
+    }
+    
+    /* Header Typography */
     .main-header {
-        font-size: 3rem;
-        font-weight: 700;
-        background: linear-gradient(90deg, #1f77b4, #ff7f0e);
+        font-size: 3.5rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #00c6ff, #0072ff);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.2rem;
+        letter-spacing: -1px;
     }
     .sub-header {
-        color: #666;
-        font-size: 1.1rem;
-        margin-bottom: 2rem;
+        color: #8b949e;
+        font-size: 1.2rem;
+        font-weight: 400;
+        margin-bottom: 2.5rem;
     }
-    .metric-card {
-        background-color: #f8f9fa;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        border-left: 4px solid #1f77b4;
+    
+    /* Glowing Glassmorphism Metric Cards */
+    div[data-testid="metric-container"] {
+        background: rgba(26, 28, 36, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
     }
-    .stButton>button {
+    div[data-testid="metric-container"]:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 15px rgba(0, 198, 255, 0.2);
+        border-color: rgba(0, 198, 255, 0.5);
+    }
+    
+    /* Sleek Primary Buttons */
+    .stButton>button[kind="primary"] {
         width: 100%;
-        background: linear-gradient(90deg, #1f77b4, #2ca02c);
+        background: linear-gradient(135deg, #0072ff, #00c6ff);
         color: white;
-        font-weight: 600;
-        padding: 0.75rem;
-        border-radius: 0.5rem;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        padding: 0.8rem;
+        border-radius: 8px;
         border: none;
+        box-shadow: 0 4px 10px rgba(0, 114, 255, 0.4);
+        transition: all 0.3s ease;
     }
-    .stButton>button:hover {
-        background: linear-gradient(90deg, #1565c0, #1e7e34);
+    .stButton>button[kind="primary"]:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        box-shadow: 0 6px 15px rgba(0, 114, 255, 0.6);
+        background: linear-gradient(135deg, #00c6ff, #0072ff);
+    }
+    
+    /* Secondary Buttons */
+    .stButton>button[kind="secondary"] {
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.05);
+        transition: all 0.2s ease;
+    }
+    .stButton>button[kind="secondary"]:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.4);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -511,33 +547,49 @@ if run_button and target_ticker:
         
         if st.button("Generate Executive Briefing", icon="✨", type="secondary"):
             with st.spinner("Synthesizing metrics using Gemini..."):
-                try:
-                    # Initialize Gemini with the verified key
-                    client = genai.Client(api_key=api_key)
-                    # Convert dataframe to text for the prompt
-                    df_string = out.to_string()
-                    
-                    prompt = f"""
-                    You are an elite Wall Street Investment Banker. Review this precise comparable company analysis (Comps) table:
-                    {df_string}
-                    
-                    Write a punchy, 3-paragraph executive summary covering:
-                    1. The clear sector leader based on size and profitability.
-                    2. Valuation discrepancies: Who trades at a premium vs discount (P/E and EV/Rev)? Is the premium justified by their Rule of 40 efficiency?
-                    3. Key risks or laggards identified in the cohort.
-                    
-                    Do not hallucinate. Do not mention standard disclaimers. Use bolding to emphasize ticker symbols and key metrics. Keep it incredibly professional.
-                    """
-                    
-                    response = client.models.generate_content(
-                        model="gemini-2.0-flash",
-                        contents=prompt
-                    )
-                    
-                    st.info(response.text)
-                    
-                except Exception as e:
-                    st.error(f"⚠️ Failed to generate AI summary: {str(e)}")
+                import time
+                client = genai.Client(api_key=api_key)
+                df_string = out.to_string()
+                
+                prompt = f"""
+                You are an elite Wall Street Investment Banker. Review this precise comparable company analysis (Comps) table:
+                {df_string}
+                
+                Write a punchy, 3-paragraph executive summary covering:
+                1. The clear sector leader based on size and profitability.
+                2. Valuation discrepancies: Who trades at a premium vs discount (P/E and EV/Rev)? Is the premium justified by their Rule of 40 efficiency?
+                3. Key risks or laggards identified in the cohort.
+                
+                Do not hallucinate. Do not mention standard disclaimers. Use bolding to emphasize ticker symbols and key metrics. Keep it incredibly professional.
+                """
+                
+                max_retries = 3
+                success = False
+                
+                for attempt in range(max_retries):
+                    try:
+                        response = client.models.generate_content(
+                            model="gemini-2.0-flash",
+                            contents=prompt
+                        )
+                        st.info(response.text)
+                        success = True
+                        break
+                    except Exception as e:
+                        err_msg = str(e).lower()
+                        if "429" in err_msg or "too many requests" in err_msg or "resourceexhausted" in err_msg:
+                            if attempt < max_retries - 1:
+                                wait_time = 15 * (2 ** attempt)  # 15s, 30s
+                                st.warning(f"⚠️ API Rate Limit reached (Free Tier). Retrying in {wait_time}s...")
+                                time.sleep(wait_time)
+                            else:
+                                st.error(f"❌ Failed to generate AI summary after {max_retries} attempts: {str(e)}")
+                        else:
+                            st.error(f"⚠️ Failed to generate AI summary: {str(e)}")
+                            break
+                
+                if not success and attempt == max_retries - 1:
+                    st.info("Try waiting a minute before generating the summary to let the Gemini Free Tier quota reset.")
                     
         st.markdown("---")
         
