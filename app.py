@@ -419,12 +419,12 @@ if st.session_state.run_analysis and target_ticker:
             tick = row["ticker"]
             comp_name = next((n for t, n in sec_list if t == tick), tick)
             
-            # If the SEC list failed entirely (e.g. SSL block) or missing, fallback to yfinance info
+            # If the SEC list failed entirely (e.g. SSL block) or missing, fallback to yfinance Search
             if comp_name == tick:
                 try:
-                    t_obj = yf.Ticker(tick)
-                    temp_info = t_obj.info
-                    comp_name = temp_info.get("shortName", tick)
+                    search_res = yf.Search(tick, max_results=1).quotes
+                    if search_res:
+                        comp_name = search_res[0].get("shortname", tick)
                 except Exception:
                     pass
             
