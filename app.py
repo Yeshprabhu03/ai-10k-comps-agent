@@ -126,12 +126,18 @@ def _fetch_ma_deals(ticker: str):
     try:
         from ma_service import get_recent_ma_deals
         
+        # Grab the API key from Streamlit secrets or OS env
+        api_key = get_api_key()
+        if not api_key:
+            st.error("Google API Key is missing. Please add it to .env or Streamlit Secrets.")
+            return []
+            
         # Create a new event loop so Streamlit can run the async function natively
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         # Natively execute the M&A feature without using port 8000
-        response = loop.run_until_complete(get_recent_ma_deals(ticker))
+        response = loop.run_until_complete(get_recent_ma_deals(ticker=ticker, api_key=api_key))
         
         if response.status == "Success":
             # Convert Pydantic objects back into dicts for the Streamlit UI

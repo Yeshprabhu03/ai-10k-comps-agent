@@ -29,36 +29,43 @@ def health_check():
     return {"status": "healthy", "service": "M&A Deal Extractor"}
 
 @app.get("/api/v1/deals/{ticker}", response_model=DealResponse)
-async def get_recent_ma_deals(ticker: str):
+async def get_recent_ma_deals(ticker: str, api_key: str = None):
     try:
-        # Build Google News RSS query for M&A
-        query = quote(f"{ticker} (merger OR acquisition OR buyout OR advised by)")
-        url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+        # Use DuckDuckGo HTML search for deeper snippets than RSS
+        import urllib.parse
+        query = urllib.parse.quote(f"{ticker} mergers acquisitions advisory firm deal value")
+        url = f"https://html.duckduckgo.com/html/?q={query}"
         
-        # Use httpx for non-blocking async fetching
+        from bs4 import BeautifulSoup
         import httpx
         import ssl
+        
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         
         async with httpx.AsyncClient(verify=ctx) as ac:
-            resp = await ac.get(url, timeout=10.0, headers={'User-Agent': 'Mozilla/5.0'})
-            xml_data = resp.text
-        
-        # Parse RSS
-        root = ET.fromstring(xml_data)
-        news_items = []
-        for item in root.findall('.//item')[:10]:  # Top 10 articles
-            title = item.find('title').text if item.find('title') is not None else ""
-            desc = item.find('description').text if item.find('description') is not None else ""
-            pub_date = item.find('pubDate').text if item.find('pubDate') is not None else ""
-            news_items.append(f"Title: {title}\nDate: {pub_date}\nSummary: {desc}\n")
+            resp = await ac.get(url, timeout=15.0, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Safari/537.36'})
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            
+            news_items = []
+            for a in soup.find_all('a', class_='result__snippet'):
+                text = a.text.strip()
+                if text:
+                    news_items.append(text)
+                    
+            if not news_items:
+                # Fallback to general snippets if 'a' tags fail
+                for d in soup.find_all('div', class_='result__snippet'):
+                    text = d.text.strip()
+                    if text:
+                        news_items.append(text)
         
         if not news_items:
             return DealResponse(ticker=ticker, deals=[], status="No news found")
             
-        combined_text = "\n---\n".join(news_items)
+        # Only keep top 15 snippets to avoid token explosion
+        combined_text = "\n---\n".join(news_items[:15])
         
         prompt = f"""
         You are an elite Investment Banking analyst. Read the following recent financial news snippets regarding the company {ticker}.
@@ -80,7 +87,14 @@ async def get_recent_ma_deals(ticker: str):
         {combined_text}
         """
         
-        client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+        import os
+        from dotenv import load_dotenv
+        load_dotenv()
+        
+        if not api_key:
+            api_key = os.getenv("GOOGLE_API_KEY")
+            
+        client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
