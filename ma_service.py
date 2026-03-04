@@ -11,8 +11,6 @@ from dotenv import load_dotenv
 load_dotenv()
 app = FastAPI(title="IB Comps M&A Microservice", version="1.0")
 
-client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-
 class DealItem(BaseModel):
     deal_name: str
     target_company: str
@@ -31,20 +29,22 @@ def health_check():
     return {"status": "healthy", "service": "M&A Deal Extractor"}
 
 @app.get("/api/v1/deals/{ticker}", response_model=DealResponse)
-def get_recent_ma_deals(ticker: str):
+async def get_recent_ma_deals(ticker: str):
     try:
         # Build Google News RSS query for M&A
         query = quote(f"{ticker} (merger OR acquisition OR buyout OR advised by)")
         url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
         
-        req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        # Use httpx for non-blocking async fetching
+        import httpx
         import ssl
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         
-        with urlopen(req, timeout=10, context=ctx) as resp:
-            xml_data = resp.read()
+        async with httpx.AsyncClient(verify=ctx) as ac:
+            resp = await ac.get(url, timeout=10.0, headers={'User-Agent': 'Mozilla/5.0'})
+            xml_data = resp.text
         
         # Parse RSS
         root = ET.fromstring(xml_data)
@@ -80,6 +80,7 @@ def get_recent_ma_deals(ticker: str):
         {combined_text}
         """
         
+        client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
