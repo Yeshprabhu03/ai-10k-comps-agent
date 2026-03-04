@@ -119,11 +119,12 @@ def _get_ai_peer_suggestions(company_name: str, industry: str, sector: str, api_
     except Exception:
         return []
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def _fetch_ma_deals(ticker: str):
     """Fetches M&A deals dynamically from the local FastAPI microservice."""
     try:
         import requests
+        print(f"Busting cache... Pinging Uvicorn directly for {ticker}")
         resp = requests.get(f"http://127.0.0.1:8000/api/v1/deals/{ticker}", timeout=15)
         if resp.status_code == 200:
             return resp.json().get("deals", [])
