@@ -31,41 +31,71 @@ def health_check():
 @app.get("/api/v1/deals/{ticker}", response_model=DealResponse)
 async def get_recent_ma_deals(ticker: str, api_key: str = None):
     try:
-        # Use DuckDuckGo HTML search for deeper snippets than RSS
-        import urllib.parse
-        query = urllib.parse.quote(f"{ticker} mergers acquisitions advisory firm deal value")
-        url = f"https://html.duckduckgo.com/html/?q={query}"
+        # 1. First try deep Google SERP scraping for actual Investment Bank Advisors and Deal Values
+        from googlesearch import search
         
-        from bs4 import BeautifulSoup
-        import httpx
-        import ssl
+        news_items = set()
         
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        # We run two specific queries to guarantee we find the M&A Deal Value AND the involved Underwriters
+        query_general = f"{ticker} \"merger\" OR \"acquisition\" \"deal value\""
+        query_advisors = f"{ticker} merger acquisition \"financial advisor\" OR \"advised by\" OR \"investment bank\""
         
-        async with httpx.AsyncClient(verify=ctx) as ac:
-            resp = await ac.get(url, timeout=15.0, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Safari/537.36'})
-            soup = BeautifulSoup(resp.text, 'html.parser')
+        try:
+            # Fetch general M&A news
+            for res in search(query_general, advanced=True, num_results=5, sleep_interval=2):
+                if res.description and len(res.description) > 30:
+                    news_items.add(f"Title: {res.title}\nSnippet: {res.description}")
+                
+            # Fetch Investment Banking Advisor specific news
+            for res in search(query_advisors, advanced=True, num_results=5, sleep_interval=2):
+                if res.description and len(res.description) > 30:
+                    news_items.add(f"Title: {res.title}\nSnippet: {res.description}")
+        except Exception as e:
+            print(f"Google Rate Limit Hit. Falling back to DuckDuckGo: {e}")
+            pass
             
-            news_items = []
-            for a in soup.find_all('a', class_='result__snippet'):
-                text = a.text.strip()
-                if text:
-                    news_items.append(text)
-                    
-            if not news_items:
-                # Fallback to general snippets if 'a' tags fail
-                for d in soup.find_all('div', class_='result__snippet'):
-                    text = d.text.strip()
-                    if text:
-                        news_items.append(text)
-        
+        # 2. If Google failed or returned empty (HTTP 429), fallback to DuckDuckGo HTML scraping
         if not news_items:
-            return DealResponse(ticker=ticker, deals=[], status="No news found")
+            import urllib.parse
+            from bs4 import BeautifulSoup
+            import httpx
+            import ssl
+            import asyncio
             
-        # Only keep top 15 snippets to avoid token explosion
-        combined_text = "\n---\n".join(news_items[:15])
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            
+            query_val_ddg = urllib.parse.quote(f"{ticker} acquires acquired merger deal value billion")
+            query_adv_ddg = urllib.parse.quote(f"{ticker} merger acquisition financial advisor investment bank advising")
+            
+            url_val = f"https://html.duckduckgo.com/html/?q={query_val_ddg}"
+            url_adv = f"https://html.duckduckgo.com/html/?q={query_adv_ddg}"
+            
+            async with httpx.AsyncClient(verify=ctx) as ac:
+                # Fetch both Deal Value and Advisor Context
+                reqs = await asyncio.gather(
+                    ac.get(url_val, timeout=10.0, headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}),
+                    ac.get(url_adv, timeout=10.0, headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'})
+                )
+                
+                for resp in reqs:
+                    soup = BeautifulSoup(resp.text, 'html.parser')
+                    for a in soup.find_all('a', class_='result__snippet'):
+                        text = a.text.strip()
+                        if text and len(text) > 30:
+                            news_items.add(text)
+                    for d in soup.find_all('div', class_='result__snippet'):
+                        text = d.text.strip()
+                        if text and len(text) > 30:
+                            news_items.add(text)
+                            
+        news_items = list(news_items)
+            
+        if not news_items:
+            return DealResponse(ticker=ticker, deals=[], status="No news found via Search APIs")
+            
+        combined_text = "\n---\n".join(news_items)
         
         prompt = f"""
         You are an elite Investment Banking analyst. Read the following recent financial news snippets regarding the company {ticker}.
