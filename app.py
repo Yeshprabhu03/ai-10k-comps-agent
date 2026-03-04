@@ -119,37 +119,6 @@ def _get_ai_peer_suggestions(company_name: str, industry: str, sector: str, api_
     except Exception:
         return []
 
-def _fetch_ma_deals(ticker: str):
-    """Fetches M&A deals dynamically by natively executing the ma_service python module."""
-    import streamlit as st
-    import asyncio
-    try:
-        from ma_service import get_recent_ma_deals
-        
-        # Grab the API key from Streamlit secrets or OS env
-        api_key = get_api_key()
-        if not api_key:
-            st.error("Google API Key is missing. Please add it to .env or Streamlit Secrets.")
-            return []
-            
-        # Create a new event loop so Streamlit can run the async function natively
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Natively execute the M&A feature without using port 8000
-        response = loop.run_until_complete(get_recent_ma_deals(ticker=ticker, api_key=api_key))
-        
-        if response.status == "Success":
-            # Convert Pydantic objects back into dicts for the Streamlit UI
-            return [dict(d) for d in response.deals]
-        else:
-            st.error(f"Backend Engine Returned: {response.status}")
-            
-    except Exception as e:
-        st.error(f"Critical Native Execution Exception: {str(e)}")
-        print(f"M&A Service internal execution error: {e}")
-    return []
-
 
 def search_tickers_sec(searchterm: str):
     """Searchable dropdown: suggests as you type (SEC list, or yfinance fallback)."""
@@ -184,75 +153,6 @@ def search_tickers_sec(searchterm: str):
 # --- Header with Gradient ---
 st.markdown('<h1 class="main-header">📊 IB Comps Agent</h1>', unsafe_allow_html=True)
 st.markdown('<p class="sub-header">Automated SEC 10-K Benchmarking & Investment Banking Valuation Dashboard</p>', unsafe_allow_html=True)
-
-if "app_mode" not in st.session_state:
-    st.session_state.app_mode = "home"
-
-if st.session_state.app_mode == "home":
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1, 8, 1])
-    with c2:
-        st.markdown("### Select Module")
-        col_A, col_B = st.columns(2)
-        with col_A:
-            st.markdown("""
-            <div style="border: 1px solid #444; border-radius: 8px; padding: 20px; text-align: center; background: #111;">
-                <h2 style="color: #FF8C00; margin-bottom: 5px;">📈 IB Comps</h2>
-                <p style="color: #ccc; font-size: 0.9rem;">Run relative valuation against U.S. public peers.</p>
-            </div>
-            """, unsafe_allow_html=True)
-            if st.button("Launch Comps Engine", use_container_width=True, type="primary"):
-                st.session_state.app_mode = "comps"
-                st.rerun()
-        with col_B:
-            st.markdown("""
-            <div style="border: 1px solid #444; border-radius: 8px; padding: 20px; text-align: center; background: #111;">
-                <h2 style="color: #00d2ff; margin-bottom: 5px;">🤝 M&A Deals</h2>
-                <p style="color: #ccc; font-size: 0.9rem;">Track live M&A deal advisors using News RAG.</p>
-            </div>
-            """, unsafe_allow_html=True)
-            if st.button("Launch M&A Tracker", use_container_width=True, type="primary"):
-                st.session_state.app_mode = "m_and_a"
-                st.rerun()
-    st.stop()
-
-if st.button("⬅️ Back to Home"):
-    st.session_state.app_mode = "home"
-    st.rerun()
-
-st.markdown("---")
-
-if st.session_state.app_mode == "m_and_a":
-    st.markdown("## 🤝 Live M&A Deal Tracker")
-    st.markdown("Powered by Google Gemini 2.5 News RAG Architecture.")
-    
-    ma_ticker = st_searchbox(
-        search_tickers_sec,
-        key="ma_ticker_search",
-        label="🔍 Search Target Company (SEC list)",
-        placeholder="Type 'Microsoft' or 'MSFT'...",
-        default=None
-    )
-    
-    if ma_ticker:
-        st.markdown(f"**Live M&A Deal Tracker for {ma_ticker}**")
-        with st.spinner("Pinging FastAPI Microservice..."):
-            deals = _fetch_ma_deals(ma_ticker)
-            
-        if deals:
-            for d in deals:
-                st.markdown(f"#### {d.get('deal_name', 'Unknown Deal')}")
-                st.caption(f"**Value:** {d.get('deal_value', 'Undisclosed')}")
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Target", d.get('target_company', 'N/A'))
-                c2.metric("Acquirer", d.get('acquirer_company', 'N/A'))
-                c3.metric("Buy-Side Advisors", d.get('buy_side_advisors', 'N/A'))
-                c4.metric("Sell-Side Advisors", d.get('sell_side_advisors', 'N/A'))
-                st.divider()
-        else:
-            st.info("No recent M&A activity found or Microservice is offline. Ensure you are running `uvicorn ma_service:app --port 8000` in a separate terminal.")
-            
-    st.stop()
 
 # --- Settings Expander for Comps Mode ---
 if "peer_list" not in st.session_state:
