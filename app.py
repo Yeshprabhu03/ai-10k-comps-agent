@@ -120,24 +120,28 @@ def _get_ai_peer_suggestions(company_name: str, industry: str, sector: str, api_
         return []
 
 def _fetch_ma_deals(ticker: str):
-    """Fetches M&A deals dynamically from the local FastAPI microservice."""
-    import requests
+    """Fetches M&A deals dynamically by natively executing the ma_service python module."""
     import streamlit as st
-    
-    # Try multiple local host names in case of macOS / Devcontainer network constraints
-    hosts = ["127.0.0.1", "localhost", "0.0.0.0"]
-    
-    for host in hosts:
-        try:
-            resp = requests.get(f"http://{host}:8000/api/v1/deals/{ticker}", timeout=6, proxies={"http": None, "https": None})
-            if resp.status_code == 200:
-                return resp.json().get("deals", [])
-        except requests.exceptions.ConnectionError:
-            continue
-        except Exception as e:
-            print(f"M&A Service Connection Error on {host}: {e}")
+    import asyncio
+    try:
+        from ma_service import get_recent_ma_deals
+        
+        # Create a new event loop so Streamlit can run the async function natively
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Natively execute the M&A feature without using port 8000
+        response = loop.run_until_complete(get_recent_ma_deals(ticker))
+        
+        if response.status == "Success":
+            # Convert Pydantic objects back into dicts for the Streamlit UI
+            return [dict(d) for d in response.deals]
+        else:
+            st.error(f"Backend Engine Returned: {response.status}")
             
-    st.error("🚨 CRITICAL: Streamlit could not reach the Uvicorn Microservice on port 8000. Please completely close and RESTART your FastAPI terminal (`uvicorn ma_service:app --port 8000`).")
+    except Exception as e:
+        st.error(f"Critical Native Execution Exception: {str(e)}")
+        print(f"M&A Service internal execution error: {e}")
     return []
 
 
