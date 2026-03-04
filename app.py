@@ -121,21 +121,23 @@ def _get_ai_peer_suggestions(company_name: str, industry: str, sector: str, api_
 
 def _fetch_ma_deals(ticker: str):
     """Fetches M&A deals dynamically from the local FastAPI microservice."""
-    try:
-        import requests
-        import streamlit as st
-        print(f"Busting cache... Pinging Uvicorn directly for {ticker}")
-        # Disable proxies to prevent local mac dev environments from hijacking 127.0.0.1
-        resp = requests.get(f"http://127.0.0.1:8000/api/v1/deals/{ticker}", timeout=15, proxies={"http": None, "https": None})
-        if resp.status_code == 200:
-            return resp.json().get("deals", [])
-        else:
-            st.error(f"Backend Server Returned Error Code: {resp.status_code}")
-            print(f"M&A Service returned bad status: {resp.status_code}")
-    except Exception as e:
-        import streamlit as st
-        st.error(f"Critical Backend Connection Exception: {str(e)}")
-        print(f"M&A Service Connection Error: {e}")
+    import requests
+    import streamlit as st
+    
+    # Try multiple local host names in case of macOS / Devcontainer network constraints
+    hosts = ["127.0.0.1", "localhost", "0.0.0.0"]
+    
+    for host in hosts:
+        try:
+            resp = requests.get(f"http://{host}:8000/api/v1/deals/{ticker}", timeout=6, proxies={"http": None, "https": None})
+            if resp.status_code == 200:
+                return resp.json().get("deals", [])
+        except requests.exceptions.ConnectionError:
+            continue
+        except Exception as e:
+            print(f"M&A Service Connection Error on {host}: {e}")
+            
+    st.error("🚨 CRITICAL: Streamlit could not reach the Uvicorn Microservice on port 8000. Please completely close and RESTART your FastAPI terminal (`uvicorn ma_service:app --port 8000`).")
     return []
 
 
